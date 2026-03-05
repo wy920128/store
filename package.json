@@ -1,0 +1,19 @@
+{
+  "name": "store",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "nuxt build",
+    "dev": "nuxt dev",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview",
+    "postinstall": "nuxt prepare"
+  },
+  "dependencies": {
+    "@element-plus/nuxt": "^1.1.5",
+    "element-plus": "^2.13.3",
+    "nuxt": "^4.3.1",
+    "vue": "^3.5.29",
+    "vue-router": "^4.6.4"
+  }
+}
