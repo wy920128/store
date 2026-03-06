@@ -2,18 +2,18 @@
  * @Author: 王野 18545455617@163.com
  * @Date: 2026-03-04 16:35:26
  * @LastEditors: 王野 18545455617@163.com
- * @LastEditTime: 2026-03-05 16:36:28
+ * @LastEditTime: 2026-03-06 08:19:55
  * @FilePath: /store/README.md
  * @Description: README.md
 -->
 
 3. 数据库语句
    -- 创建数据库
-   CREATE DATABASE IF NOT EXISTS store
+   CREATE DATABASE IF NOT EXISTS uos
    DEFAULT CHARACTER SET utf8mb4
    COLLATE utf8mb4_unicode_ci;
 
-   USE store;
+   USE uos;
 
    -- 1. 创建分类表(classify)
    CREATE TABLE IF NOT EXISTS classify (
@@ -57,3 +57,14 @@
    FOREIGN KEY (classify_id) REFERENCES classify(id) ON DELETE CASCADE ON UPDATE CASCADE,
    FOREIGN KEY (software_id) REFERENCES software(id) ON DELETE CASCADE ON UPDATE CASCADE
    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='分类关联软件表';
+
+   -- 4. 插入分类数据
+   INSERT IGNORE INTO classify (name, description)
+   VALUES
+   ('办公效率', '日常办公、公文处理、跨部门协作、勤务调度类工具软件'),
+   ('设计创意', '宣传素材制作、案件可视化、视频剪辑、制图绘图类软件'),
+   ('开发工具', '信息化项目研发、代码调试、接口测试、开发环境类工具软件'),
+   ('系统工具', '内网终端优化、文件加密管理、硬件监控、驱动适配类工具软件'),
+   ('通讯社交', '内网即时通讯、涉密邮件、跨单位协同沟通类软件（合规备案版）'),
+   ('数据管理', '涉案数据备份、数据分析、数据库运维、存储加密管理类软件'),
+   ('教育学习', '干警技能培训、执法规范学习、题库练习、线上考核类软件');
