@@ -1,24 +1,64 @@
 """
-统信UOS内网应用商店 - 工具类整合
-修复 datatype mismatch 数据类型不匹配问题
+统信UOS内网应用商店 - 工具类（简化版）
+移除本地缓存，所有数据直接从远程MariaDB服务器获取
 """
 import os
 import re
-import enum
-import uuid
+import json
 import logging
 import datetime
 import pymysql
-import sqlite3
-from typing import Optional, Union, Type, List, Dict, Any
+from typing import Optional, List, Dict, Any
 from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
+
+# ===================== SQL配置加载类 =====================
+
+
+class SQLConfig:
+    """SQL配置加载工具类"""
+    _sql_config = None
+
+    @classmethod
+    def load_sql_config(cls, config_path: str = "./sql.json") -> Dict:
+        """加载SQL配置文件"""
+        if cls._sql_config is not None:
+            return cls._sql_config
+
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"SQL配置文件不存在: {config_path}")
+
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                cls._sql_config = json.load(f)
+            LogUtil.get_logger().info("SQL配置文件加载成功")
+            return cls._sql_config
+        except Exception as e:
+            LogUtil.get_logger().error(f"加载SQL配置失败: {e}", exc_info=True)
+            raise
+
+    @classmethod
+    def get_sql(cls, key_path: str) -> str:
+        """
+        获取指定SQL语句
+        :param key_path: 层级路径，如"remote.select_category"
+        :return: SQL语句字符串
+        """
+        config = cls.load_sql_config()
+        keys = key_path.split(".")
+        value = config
+        for key in keys:
+            if key not in value:
+                raise KeyError(f"SQL配置中未找到键: {key_path}")
+            value = value[key]
+        return value
+
 
 # ===================== 基础配置 =====================
 # 加载环境变量
 load_dotenv()
 
-# 数据库配置
+# 远程数据库配置
 DB_CONFIG = {
     "host": os.getenv("DB_HOST", "127.0.0.1"),
     "port": int(os.getenv("DB_PORT", 3306)),
@@ -26,12 +66,6 @@ DB_CONFIG = {
     "password": os.getenv("DB_PASSWORD", "123456"),
     "database": os.getenv("DB_NAME", "uos_appstore"),
     "charset": "utf8mb4"
-}
-
-# 本地缓存配置
-CACHE_CONFIG = {
-    "path": os.getenv("CACHE_PATH", "./cache.db"),
-    "expire_hours": int(os.getenv("CACHE_EXPIRE_HOURS", 2))
 }
 
 # 日志配置
@@ -152,29 +186,80 @@ class TimeUtil:
             return ""
 
     @classmethod
-    def parse_datetime(cls, dt_str: str, fmt: str = DATETIME_FORMAT) -> datetime.datetime:
+    def parse_datetime(cls, dt_str: str, fmt: str = DATETIME_FORMAT) -> Optional[datetime.datetime]:
         """解析字符串为时间对象"""
         if not dt_str:
-            return None  # 修改：空字符串返回None而非抛出异常
+            return None
         try:
             return datetime.datetime.strptime(dt_str, fmt)
         except Exception as e:
             LogUtil.error(f"时间解析失败: {e}", exc_info=True)
             return None
 
+# ===================== 数据类型转换工具类 =====================
+
+
+class DataTypeUtil:
+    """数据类型转换工具类"""
+
     @classmethod
-    def get_time_diff_hours(cls, start_time: str, end_time: str) -> float:
-        """计算两个时间字符串的小时差"""
+    def safe_int(cls, value: Any, default: int = 0) -> int:
+        """安全转换为整数"""
+        if value is None:
+            return default
         try:
-            t1 = cls.parse_datetime(start_time)
-            t2 = cls.parse_datetime(end_time)
-            if t1 is None or t2 is None:
-                return CACHE_CONFIG["expire_hours"] + 1  # 缓存过期
-            diff_seconds = (t2 - t1).total_seconds()
-            return diff_seconds / 3600
+            if isinstance(value, (int, float)):
+                return int(value)
+            if isinstance(value, str):
+                cleaned = ''.join(filter(str.isdigit, str(value)))
+                if cleaned:
+                    return int(cleaned)
         except Exception as e:
-            LogUtil.error(f"计算时间差失败: {e}", exc_info=True)
-            return CACHE_CONFIG["expire_hours"] + 1
+            LogUtil.warning(f"整数转换失败: {value} -> {e}")
+        return default
+
+    @classmethod
+    def safe_str(cls, value: Any, default: str = "") -> str:
+        """安全转换为字符串"""
+        if value is None:
+            return default
+        try:
+            return str(value).strip()
+        except Exception as e:
+            LogUtil.warning(f"字符串转换失败: {value} -> {e}")
+            return default
+
+    @classmethod
+    def safe_bool(cls, value: Any, default: bool = False) -> bool:
+        """安全转换为布尔值"""
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            return value.lower() in ("true", "1", "yes", "y", "t")
+        return default
+
+    @classmethod
+    def convert_remote_data(cls, remote_data: dict, field_types: dict) -> dict:
+        """根据字段类型转换远程数据"""
+        result = {}
+        for field, value in remote_data.items():
+            if field in field_types:
+                target_type = field_types[field]
+                if target_type == "int":
+                    result[field] = cls.safe_int(value)
+                elif target_type == "str":
+                    result[field] = cls.safe_str(value)
+                elif target_type == "bool":
+                    result[field] = cls.safe_bool(value)
+                else:
+                    result[field] = value
+            else:
+                result[field] = value
+        return result
 
 # ===================== 数据校验工具类 =====================
 
@@ -252,146 +337,16 @@ class ValidateUtil:
 
 
 class DBUtil:
-    """数据库工具类（远程MariaDB + 本地SQLite）"""
+    """数据库工具类（仅远程MariaDB交互）"""
 
     def __init__(self):
         self.logger = LogUtil.get_logger()
         self.remote_conn = None
-        self.local_conn = None
-        self._init_local_db()
+        # 加载SQL配置
+        self.sql_config = SQLConfig.load_sql_config()
 
-    def _init_local_db(self):
-        """初始化本地缓存数据库"""
-        try:
-            # 创建目录
-            os.makedirs(os.path.dirname(CACHE_CONFIG["path"]), exist_ok=True)
-
-            # 连接本地数据库（线程安全配置）
-            self.local_conn = sqlite3.connect(
-                CACHE_CONFIG["path"],
-                check_same_thread=False,
-                detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES
-            )
-            self.local_conn.execute("PRAGMA foreign_keys = ON")
-            self.local_conn.execute("PRAGMA journal_mode = WAL")  # 提升并发性能
-
-            # 创建表结构
-            self._create_local_tables()
-            self.logger.info("本地缓存数据库初始化完成")
-        except Exception as e:
-            self.logger.error(f"初始化本地数据库失败: {e}", exc_info=True)
-            raise
-
-    def _create_local_tables(self):
-        """创建本地缓存表结构"""
-        cursor = self.local_conn.cursor()
-
-        # 分类表
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS category (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            description TEXT,
-            created_time TEXT DEFAULT CURRENT_TIMESTAMP,
-            updated_time TEXT DEFAULT CURRENT_TIMESTAMP,
-            deleted_time TEXT DEFAULT ''
-        )
-        """)
-
-        # 软件表
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS software (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            version TEXT,
-            size TEXT,
-            download_count INTEGER DEFAULT 0,
-            download_url TEXT,
-            created_time TEXT DEFAULT CURRENT_TIMESTAMP,
-            updated_time TEXT DEFAULT CURRENT_TIMESTAMP,
-            deleted_time TEXT DEFAULT ''
-        )
-        """)
-
-        # 分类-软件关联表
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS category2software (
-            category_id INTEGER,
-            software_id INTEGER,
-            created_time TEXT DEFAULT CURRENT_TIMESTAMP,
-            deleted_time TEXT DEFAULT '',
-            PRIMARY KEY (category_id, software_id),
-            FOREIGN KEY (category_id) REFERENCES category(id),
-            FOREIGN KEY (software_id) REFERENCES software(id)
-        )
-        """)
-
-        # 用户表
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS user (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            number TEXT UNIQUE,
-            department TEXT,
-            created_time TEXT DEFAULT CURRENT_TIMESTAMP,
-            updated_time TEXT DEFAULT CURRENT_TIMESTAMP,
-            deleted_time TEXT DEFAULT ''
-        )
-        """)
-
-        # 用户-软件关联表（provider_id）
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS user2software (
-            provider_id INTEGER,
-            software_id INTEGER,
-            created_time TEXT DEFAULT CURRENT_TIMESTAMP,
-            deleted_time TEXT DEFAULT '',
-            PRIMARY KEY (provider_id, software_id),
-            FOREIGN KEY (provider_id) REFERENCES user(id),
-            FOREIGN KEY (software_id) REFERENCES software(id)
-        )
-        """)
-
-        # 系统信息表
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS system_info (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            version TEXT,
-            download_url TEXT,
-            created_time TEXT DEFAULT CURRENT_TIMESTAMP,
-            updated_time TEXT DEFAULT CURRENT_TIMESTAMP,
-            deleted_time TEXT DEFAULT ''
-        )
-        """)
-
-        # 缓存元信息表
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS cache_meta (
-            key TEXT PRIMARY KEY,
-            value TEXT,
-            update_time TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-        """)
-
-        # 初始化缓存元信息
-        cursor.execute("""
-        INSERT OR IGNORE INTO cache_meta (key, value) 
-        VALUES ('last_sync_time', '1970-01-01 00:00:00')
-        """)
-
-        # 新增应用更新、应用管理分类
-        for cate_name in ["应用更新", "应用管理"]:
-            cursor.execute("""
-            INSERT OR IGNORE INTO category (name, description, deleted_time) 
-            VALUES (?, ?, '')
-            """, (cate_name, f"{cate_name}专属分类"))
-
-        self.local_conn.commit()
-        cursor.close()
-
-    def _get_remote_conn(self):
-        """获取远程MariaDB连接"""
+    def _get_remote_conn(self) -> pymysql.connections.Connection:
+        """获取远程MariaDB连接（自动重连）"""
         if self.remote_conn and self.remote_conn.open:
             return self.remote_conn
 
@@ -402,193 +357,114 @@ class DBUtil:
                 user=DB_CONFIG["user"],
                 password=DB_CONFIG["password"],
                 database=DB_CONFIG["database"],
-                charset=DB_CONFIG["charset"]
+                charset=DB_CONFIG["charset"],
+                cursorclass=pymysql.cursors.DictCursor  # 默认返回字典格式
             )
-            self.logger.info("远程数据库连接成功")
+            self.logger.info("远程MariaDB数据库连接成功")
             return self.remote_conn
         except Exception as e:
             self.logger.error(f"远程数据库连接失败: {e}", exc_info=True)
             raise
 
-    def sync_remote_to_local(self):
-        """同步远程数据到本地缓存"""
+    def close_remote_conn(self):
+        """关闭远程数据库连接"""
+        if self.remote_conn and self.remote_conn.open:
+            self.remote_conn.close()
+            self.logger.info("远程数据库连接已关闭")
+
+    def get_data(self, sql_key: str, params: tuple = None) -> List[Dict]:
+        """
+        通用远程数据查询方法
+        :param sql_key: SQL配置中的键路径，如"remote.select_category"
+        :param params: SQL参数，元组格式
+        :return: 字典列表格式的查询结果
+        """
+        conn = None
+        cursor = None
         try:
-            # 获取远程数据
-            remote_conn = self._get_remote_conn()
-            remote_cursor = remote_conn.cursor(pymysql.cursors.DictCursor)
+            # 获取数据库连接
+            conn = self._get_remote_conn()
+            cursor = conn.cursor()
 
-            # 1. 同步分类表（修改：处理NULL为空字符串）
-            remote_cursor.execute(
-                "SELECT * FROM category WHERE deleted_time IS NULL")
-            categories = remote_cursor.fetchall()
-            for cate in categories:
-                cate['deleted_time'] = cate['deleted_time'] or ''
-                cate['created_time'] = cate['created_time'] or TimeUtil.format_datetime(
-                    TimeUtil.get_current_time())
-                cate['updated_time'] = cate['updated_time'] or TimeUtil.format_datetime(
-                    TimeUtil.get_current_time())
+            # 获取SQL语句并执行
+            sql = SQLConfig.get_sql(sql_key)
+            if params:
+                cursor.execute(sql, params)
+            else:
+                cursor.execute(sql)
 
-            # 2. 同步软件表
-            remote_cursor.execute(
-                "SELECT * FROM software WHERE deleted_time IS NULL")
-            softwares = remote_cursor.fetchall()
-            for soft in softwares:
-                soft['deleted_time'] = soft['deleted_time'] or ''
-                soft['created_time'] = soft['created_time'] or TimeUtil.format_datetime(
-                    TimeUtil.get_current_time())
-                soft['updated_time'] = soft['updated_time'] or TimeUtil.format_datetime(
-                    TimeUtil.get_current_time())
-
-            # 3. 同步关联表
-            remote_cursor.execute(
-                "SELECT * FROM category2software WHERE deleted_time IS NULL")
-            c2s = remote_cursor.fetchall()
-            for item in c2s:
-                item['deleted_time'] = item['deleted_time'] or ''
-                item['created_time'] = item['created_time'] or TimeUtil.format_datetime(
-                    TimeUtil.get_current_time())
-
-            # 写入本地数据库
-            local_cursor = self.local_conn.cursor()
-
-            # 清空旧数据（保留应用更新、应用管理分类）
-            local_cursor.execute("DELETE FROM category2software")
-            local_cursor.execute("DELETE FROM software")
-            local_cursor.execute(
-                "DELETE FROM category WHERE name NOT IN ('应用更新', '应用管理')")
-
-            # 插入分类
-            for cate in categories:
-                local_cursor.execute("""
-                INSERT OR REPLACE INTO category 
-                (id, name, description, created_time, updated_time, deleted_time)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """, (
-                    cate['id'], cate['name'], cate['description'] or '',
-                    cate['created_time'], cate['updated_time'], cate['deleted_time']
-                ))
-
-            # 插入软件
-            for soft in softwares:
-                local_cursor.execute("""
-                INSERT OR REPLACE INTO software 
-                (id, name, version, size, download_count, download_url, 
-                 created_time, updated_time, deleted_time)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    soft['id'], soft['name'], soft['version'] or '', soft['size'] or '',
-                    soft['download_count'] or 0, soft['download_url'] or '',
-                    soft['created_time'], soft['updated_time'], soft['deleted_time']
-                ))
-
-            # 插入关联数据
-            for item in c2s:
-                local_cursor.execute("""
-                INSERT OR REPLACE INTO category2software 
-                (category_id, software_id, created_time, deleted_time)
-                VALUES (?, ?, ?, ?)
-                """, (
-                    item['category_id'], item['software_id'],
-                    item['created_time'], item['deleted_time']
-                ))
-
-            # 更新同步时间
-            current_time = TimeUtil.format_datetime(
-                TimeUtil.get_current_time())
-            local_cursor.execute("""
-            UPDATE cache_meta SET value = ?, update_time = ? WHERE key = 'last_sync_time'
-            """, (current_time, current_time))
-
-            self.local_conn.commit()
-            self.logger.info("远程数据同步到本地完成")
-
-        except Exception as e:
-            self.logger.error(f"同步远程数据失败: {e}", exc_info=True)
-            raise
-        finally:
-            if 'remote_cursor' in locals():
-                remote_cursor.close()
-            if 'local_cursor' in locals():
-                local_cursor.close()
-
-    def get_data_from_cache(self, table_name: str, conditions: str = "") -> List[Dict]:
-        """从本地缓存获取数据（修改：修复类型不匹配）"""
-        try:
-            cursor = self.local_conn.cursor(sqlite3.Row)
-            # 修改：将 deleted_time IS NULL 改为 deleted_time = ''
-            base_sql = f"SELECT * FROM {table_name} WHERE deleted_time = ''"
-            if conditions:
-                # 安全拼接条件，避免SQL注入
-                base_sql += f" AND {conditions}"
-
-            self.logger.debug(f"执行SQL: {base_sql}")
-            cursor.execute(base_sql)
-            rows = cursor.fetchall()
-
-            # 转换为字典列表
-            result = []
-            for row in rows:
-                result.append(dict(row))
-
-            cursor.close()
-            self.logger.info(f"从缓存获取{table_name}数据: {len(result)}条")
+            # 获取查询结果（字典格式）
+            result = cursor.fetchall()
+            self.logger.info(f"执行SQL[{sql_key}]成功，返回{len(result)}条数据")
             return result
+
         except Exception as e:
-            self.logger.error(f"从缓存获取数据失败: {e}", exc_info=True)
-            raise
+            self.logger.error(f"查询远程数据失败[{sql_key}]: {e}", exc_info=True)
+            return []
+        finally:
+            # 关闭游标
+            if cursor:
+                cursor.close()
 
-    def get_data(self, table_name: str, conditions: str = "") -> List[Dict]:
-        """统一数据获取入口（缓存/远程）"""
-        try:
-            # 检查缓存是否过期
-            cursor = self.local_conn.cursor()
-            cursor.execute(
-                "SELECT value FROM cache_meta WHERE key = 'last_sync_time' AND deleted_time = ''")
-            last_sync = cursor.fetchone()
-            cursor.close()
-
-            last_sync_time = last_sync[0] if last_sync else '1970-01-01 00:00:00'
-            current_time = TimeUtil.format_datetime(
-                TimeUtil.get_current_time())
-            diff_hours = TimeUtil.get_time_diff_hours(
-                last_sync_time, current_time)
-
-            # 缓存过期则同步
-            if diff_hours >= CACHE_CONFIG["expire_hours"]:
-                self.sync_remote_to_local()
-
-            # 从缓存获取数据
-            return self.get_data_from_cache(table_name, conditions)
-        except Exception as e:
-            self.logger.error(f"获取数据失败: {e}", exc_info=True)
-            raise
+    def get_category_list(self) -> List[Dict]:
+        """获取所有分类列表"""
+        return self.get_data("remote.select_category")
 
     def get_category_by_name(self, cate_name: str) -> Optional[Dict]:
-        """通过名称获取分类（安全查询，修复字符串拼接问题）"""
-        try:
-            cursor = self.local_conn.cursor(sqlite3.Row)
-            # 修改：使用参数化查询，避免字符串拼接和类型问题
-            cursor.execute(
-                "SELECT * FROM category WHERE name = ? AND deleted_time = ''",
-                (cate_name,)
-            )
-            row = cursor.fetchone()
-            cursor.close()
-            return dict(row) if row else None
-        except Exception as e:
-            self.logger.error(f"获取分类失败: {e}", exc_info=True)
-            return None
+        """通过名称获取分类"""
+        result = self.get_data("remote.select_category_by_name", (cate_name,))
+        return result[0] if result else None
 
-    def close(self):
-        """关闭数据库连接"""
-        try:
-            if self.local_conn:
-                self.local_conn.close()
-            if self.remote_conn and self.remote_conn.open:
-                self.remote_conn.close()
-            self.logger.info("数据库连接已关闭")
-        except Exception as e:
-            self.logger.error(f"关闭数据库连接失败: {e}", exc_info=True)
+    def get_software_by_category(self, category_id: int) -> List[Dict]:
+        """通过分类ID获取软件列表"""
+        return self.get_data("remote.select_software_by_category", (category_id,))
+
+    def get_software_list(self) -> List[Dict]:
+        """获取所有软件列表"""
+        return self.get_data("remote.select_software")
+
+    def get_system_version(self, system_name: str = "UOS应用商店") -> Optional[Dict]:
+        """获取系统版本信息"""
+        result = self.get_data("remote.select_system_info", (system_name,))
+        return result[0] if result else None
+
+    def get_updatable_apps(self) -> List[Dict]:
+        """获取可更新的应用列表（对比本地已装和远程最新版本）"""
+        # 1. 获取本地已装应用
+        local_apps = SystemAppUtil.get_local_installed_apps()
+        if not local_apps:
+            self.logger.warning("未检测到本地已安装应用")
+            return []
+
+        # 2. 获取远程所有软件
+        remote_softs = self.get_software_list()
+        remote_soft_map = {soft["name"]: soft for soft in remote_softs}
+
+        # 3. 对比版本号，筛选可更新应用
+        updatable = []
+        for local_app in local_apps:
+            app_name = local_app["name"]
+            if app_name not in remote_soft_map:
+                continue
+
+            remote_soft = remote_soft_map[app_name]
+            compare_result = ValidateUtil.compare_versions(
+                local_app["version"], remote_soft["version"]
+            )
+
+            # 本地版本低于远程，标记为可更新
+            if compare_result == -1:
+                updatable.append({
+                    "name": app_name,
+                    "local_version": local_app["version"],
+                    "remote_version": remote_soft["version"],
+                    "download_url": remote_soft["download_url"],
+                    "size": remote_soft["size"],
+                    "provider": remote_soft["provider"]
+                })
+
+        self.logger.info(f"检测到{len(updatable)}个可更新应用")
+        return updatable
 
 # ===================== 系统应用工具类 =====================
 
@@ -603,78 +479,44 @@ class SystemAppUtil:
 
     @classmethod
     def get_local_installed_apps(cls) -> List[Dict]:
-        """获取本地已安装应用"""
+        """获取本地已安装应用（仅UOS/Debian系统）"""
         logger = LogUtil.get_logger()
         installed_apps = []
 
         try:
-            # 统信UOS基于Debian，使用dpkg获取已装应用
+            # 执行dpkg命令获取已安装包信息
             import subprocess
             result = subprocess.check_output(
                 "dpkg -l | grep -E '^ii' | awk '{print $2, $3}'",
-                shell=True, encoding="utf-8"
+                shell=True,
+                encoding="utf-8"
             )
 
             for line in result.strip().split("\n"):
                 if not line:
                     continue
                 parts = line.split()
-                app_name = parts[0].strip()
+                if len(parts) < 2:
+                    continue
 
-                # 过滤白名单
+                app_name = parts[0].strip()
+                version = parts[1].strip()
+
+                # 过滤白名单应用
                 if any(white in app_name for white in cls.WHITE_LIST):
                     continue
 
-                version = parts[1].strip() if len(parts) >= 2 else "0.0.0"
                 installed_apps.append({
                     "name": app_name,
                     "version": version
                 })
 
-            logger.info(f"获取本地已装应用: {len(installed_apps)}条")
+            logger.info(f"获取本地已安装应用{len(installed_apps)}个")
             return installed_apps
+
         except Exception as e:
             logger.error(f"获取本地应用失败: {e}", exc_info=True)
             return []
-
-    @classmethod
-    def get_updatable_apps(cls, db_util: DBUtil) -> List[Dict]:
-        """获取可更新应用"""
-        logger = LogUtil.get_logger()
-
-        # 获取本地应用
-        local_apps = cls.get_local_installed_apps()
-        if not local_apps:
-            return []
-
-        # 获取远程软件信息
-        remote_softs = db_util.get_data("software")
-        remote_soft_map = {soft["name"]: soft for soft in remote_softs}
-
-        # 对比版本
-        updatable = []
-        for local_app in local_apps:
-            app_name = local_app["name"]
-            if app_name not in remote_soft_map:
-                continue
-
-            remote_soft = remote_soft_map[app_name]
-            compare_result = ValidateUtil.compare_versions(
-                local_app["version"], remote_soft["version"]
-            )
-
-            # 本地版本低于远程
-            if compare_result == -1:
-                updatable.append({
-                    "name": app_name,
-                    "local_version": local_app["version"],
-                    "remote_version": remote_soft["version"],
-                    "download_url": remote_soft["download_url"],
-                    "size": remote_soft["size"]
-                })
-
-        logger.info(f"检测到可更新应用: {len(updatable)}条")
-        return updatable
 
 # ===================== 应用商店自更新工具类 =====================
 
@@ -688,32 +530,32 @@ class AppStoreUpdateUtil:
 
         try:
             # 获取本地版本
+            local_version = "1.0.0"  # 实际场景中可从配置文件/版本文件读取
             if os.path.exists("version.txt"):
                 with open("version.txt", "r") as f:
                     local_version = f.read().strip()
-            else:
-                # 默认版本
-                local_version = "1.0.0"
-                with open("version.txt", "w") as f:
-                    f.write(local_version)
 
-            # 获取远程版本（使用参数化查询）
-            system_info = db_util.get_data(
-                "system_info", "name = 'uos_appstore'")
+            # 获取远程版本信息
+            system_info = db_util.get_system_version()
             if not system_info:
-                return {"need_update": False, "message": "未找到应用商店版本信息"}
+                return {
+                    "need_update": False,
+                    "message": "未找到应用商店远程版本信息"
+                }
 
-            remote_version = system_info[0]["version"]
+            remote_version = f"{system_info['major']}.{system_info['minor']}.{system_info['patch']}"
             compare_result = ValidateUtil.compare_versions(
-                local_version, remote_version)
+                local_version, remote_version
+            )
 
             if compare_result == -1:
                 return {
                     "need_update": True,
                     "local_version": local_version,
                     "remote_version": remote_version,
-                    "message": f"发现新版本: {remote_version}",
-                    "download_url": system_info[0].get("download_url", "")
+                    "changelog": system_info.get("update_log", ""),
+                    "is_force": bool(system_info.get("is_force", 0)),
+                    "message": f"发现新版本: {remote_version}"
                 }
             else:
                 return {
@@ -722,13 +564,17 @@ class AppStoreUpdateUtil:
                     "remote_version": remote_version,
                     "message": "当前已是最新版本"
                 }
+
         except Exception as e:
             logger.error(f"检查自更新失败: {e}", exc_info=True)
-            return {"need_update": False, "message": f"检查更新失败: {str(e)}"}
+            return {
+                "need_update": False,
+                "message": f"检查更新失败: {str(e)}"
+            }
 
     @classmethod
     def do_self_update(cls, download_url: str) -> bool:
-        """执行应用商店更新"""
+        """执行应用商店自身更新"""
         logger = LogUtil.get_logger()
 
         if not download_url:
@@ -739,25 +585,73 @@ class AppStoreUpdateUtil:
             import requests
             import subprocess
             import tempfile
+            import os
 
             # 下载更新包
             logger.info(f"开始下载更新包: {download_url}")
             resp = requests.get(download_url, timeout=30)
-            resp.raise_for_status()  # 抛出HTTP错误
+            resp.raise_for_status()
 
+            # 保存到临时文件
             with tempfile.NamedTemporaryFile(suffix=".deb", delete=False) as f:
                 f.write(resp.content)
                 pkg_path = f.name
 
-            # 安装更新包
+            # 执行安装（需root权限）
             logger.info(f"安装更新包: {pkg_path}")
-            subprocess.run(["sudo", "dpkg", "-i", pkg_path],
-                           check=True, capture_output=True, text=True)
+            subprocess.run(
+                ["sudo", "dpkg", "-i", pkg_path],
+                check=True,
+                capture_output=True,
+                text=True
+            )
 
             # 清理临时文件
             os.unlink(pkg_path)
             logger.info("应用商店更新完成")
             return True
+
         except Exception as e:
             logger.error(f"执行更新失败: {e}", exc_info=True)
             return False
+
+# ===================== 测试函数 =====================
+
+
+def test_db_util():
+    """测试数据库工具类"""
+    # 初始化日志
+    LogUtil.init_logger()
+
+    # 创建数据库工具实例
+    db_util = DBUtil()
+
+    try:
+        # 测试获取分类列表
+        categories = db_util.get_category_list()
+        print(f"\n=== 分类列表（{len(categories)}条）===")
+        for cate in categories:
+            print(
+                f"ID: {cate['id']}, 名称: {cate['name']}, 描述: {cate['description']}")
+
+        # 测试获取可更新应用
+        updatable_apps = db_util.get_updatable_apps()
+        print(f"\n=== 可更新应用（{len(updatable_apps)}条）===")
+        for app in updatable_apps:
+            print(
+                f"名称: {app['name']}, 本地版本: {app['local_version']}, 最新版本: {app['remote_version']}")
+
+        # 测试检查自更新
+        update_info = AppStoreUpdateUtil.check_self_update(db_util)
+        print(f"\n=== 应用商店更新检查 ===")
+        print(f"是否需要更新: {update_info['need_update']}")
+        print(f"提示信息: {update_info['message']}")
+
+    finally:
+        # 关闭数据库连接
+        db_util.close_remote_conn()
+
+
+if __name__ == "__main__":
+    # 运行测试
+    test_db_util()

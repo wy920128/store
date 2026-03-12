@@ -1,0 +1,25 @@
+{
+  "remote": {
+    "select_category": "SELECT id, name, description, created_time, updated_time, deleted_time FROM category WHERE deleted_time IS NULL OR deleted_time = '' ORDER BY id ASC",
+    "select_category_by_name": "SELECT id, name, description, created_time, updated_time, deleted_time FROM category WHERE name = %s AND (deleted_time IS NULL OR deleted_time = '') LIMIT 1",
+    "select_software": "SELECT id, name, version, size, download_count, download_url, provider_department, provider, created_time, updated_time, deleted_time FROM software WHERE deleted_time IS NULL OR deleted_time = '' ORDER BY name ASC",
+    "select_software_by_category": "SELECT s.id, s.name, s.version, s.size, s.download_count, s.download_url, s.provider_department, s.provider, s.created_time, s.updated_time, s.deleted_time FROM software s INNER JOIN category2software cs ON s.id = cs.software_id WHERE cs.classify_id = %s AND (s.deleted_time IS NULL OR s.deleted_time = '') ORDER BY s.name ASC",
+    "select_system_info": "SELECT id, name, major, minor, patch, author, update_log, is_force, created_time, update_time, deleted_time FROM system_info WHERE name = %s AND (deleted_time IS NULL OR deleted_time = '') LIMIT 1"
+  },
+  "local_operate": {
+    "delete_category2software": "DELETE FROM category2software",
+    "delete_software": "DELETE FROM software",
+    "delete_category": "DELETE FROM category",
+    "delete_system_info": "DELETE FROM system_info",
+    "insert_category": "INSERT OR REPLACE INTO category (id, name, description, created_time, updated_time, deleted_time) VALUES (?, ?, ?, ?, ?, ?)",
+    "insert_software": "INSERT OR REPLACE INTO software (id, name, version, size, download_count, download_url, provider_department, provider, created_time, updated_time, deleted_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "insert_category2software": "INSERT OR REPLACE INTO category2software (classify_id, software_id, created_time, deleted_time) VALUES (?, ?, ?, ?)",
+    "insert_system_info": "INSERT OR REPLACE INTO system_info (id, name, major, minor, patch, author, update_log, is_force, created_time, update_time, deleted_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "update_cache_meta": "UPDATE cache_meta SET value = ?, update_time = ? WHERE key = 'last_sync_time'",
+    "select_last_sync": "SELECT value FROM cache_meta WHERE key = 'last_sync_time' AND deleted_time = ''",
+    "select_table_data": "SELECT * FROM {table_name} WHERE deleted_time = ''",
+    "select_category_by_name": "SELECT * FROM category WHERE name = ? AND deleted_time = ''",
+    "select_software_by_category": "SELECT s.* FROM software s INNER JOIN category2software c2s ON s.id = c2s.software_id WHERE c2s.classify_id = ? AND s.deleted_time = '' AND c2s.deleted_time = '' ORDER BY s.name",
+    "select_system_info_by_name": "SELECT * FROM system_info WHERE name = ? AND deleted_time = ''"
+  }
+}

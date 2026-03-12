@@ -1,37 +1,74 @@
 """
-统信UOS内网应用商店 - UI布局整合
-修复分类加载数据类型不匹配问题
+统信UOS内网应用商店 - 修复CSS属性兼容版
+解决Unknown property word-wrap/box-shadow报错
 """
 import sys
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QListWidget, QListWidgetItem, QTableWidget, QTableWidgetItem,
-    QLabel, QPushButton, QMessageBox, QHeaderView, QTabWidget,
-    QProgressBar, QDialog, QSizePolicy
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QListWidget, QListWidgetItem, QPushButton, QMessageBox,
+    QProgressBar, QDialog, QLabel, QScrollArea, QGridLayout,
+    QTableWidget, QTableWidgetItem, QHeaderView
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt6.QtGui import QFont, QIcon, QPalette, QColor
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize
+from PyQt6.QtGui import QFont, QColor
 
 # 导入工具类
 from util import (
     LogUtil, DBUtil, SystemAppUtil, AppStoreUpdateUtil,
-    ValidateUtil, TimeUtil
+    ValidateUtil
 )
+
+# ===================== 全局常量 =====================
+# 卡片布局切换阈值
+CARD_LAYOUT_SWITCH_WIDTH = 1100  # 宽度>1100时4列，否则3列
+# 右侧最小宽度
+RIGHT_MIN_WIDTH = 700
+# 卡片尺寸
+CARD_WIDTH_3COL = 220  # 3列时卡片宽度
+CARD_WIDTH_4COL = 180  # 4列时卡片宽度
+CARD_HEIGHT = 200      # 卡片固定高度
 
 # ===================== 下载进度对话框 =====================
 
 
 class DownloadDialog(QDialog):
-    """下载进度对话框"""
+    """下载进度对话框（兼容Qt样式）"""
 
     def __init__(self, title: str, parent=None):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setModal(True)
         self.setFixedSize(400, 100)
+        # 移除box-shadow，改用border和background实现
+        self.setStyleSheet("""
+            QDialog {
+                background-color: white;
+                border-radius: 12px;
+                border: 1px solid #e8e8e8;
+            }
+            QProgressBar {
+                border: none;
+                border-radius: 10px;
+                background-color: #f0f0f0;
+                height: 20px;
+                text-align: center;
+                font-size: 12px;
+            }
+            QProgressBar::chunk {
+                background-color: #0078d7;
+                border-radius: 10px;
+            }
+            QLabel {
+                color: #333333;
+                font-size: 14px;
+                margin-top: 10px;
+            }
+        """)
 
         # 布局
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
 
         # 进度条
         self.progress_bar = QProgressBar()
@@ -50,366 +87,589 @@ class DownloadDialog(QDialog):
         if value >= 100:
             QTimer.singleShot(1000, self.close)
 
-# ===================== 左侧分类列表 =====================
+# ===================== 自定义应用卡片（兼容Qt样式） =====================
 
 
-class LeftCategoryList(QWidget):
-    """左侧分类列表组件"""
-    category_clicked = pyqtSignal(str)  # 分类点击信号
+class AppCard(QWidget):
+    """应用卡片组件（修复CSS属性兼容）"""
+    download_clicked = pyqtSignal(str, str)  # 下载点击信号（url, name）
 
-    def __init__(self):
-        super().__init__()
-        self.logger = LogUtil.get_logger()
-        self.db_util = DBUtil()
+    def __init__(self, app_info: dict, parent=None):
+        super().__init__(parent)
+        self.app_info = app_info
         self.init_ui()
-        self.load_categories()
 
     def init_ui(self):
-        """初始化UI"""
-        self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(5, 5, 5, 5)
-        self.layout.setSpacing(5)
-
-        # 标题
-        title_label = QLabel("应用分类")
-        title_label.setFont(QFont("Noto Sans SC", 12, QFont.Weight.Bold))
-        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.layout.addWidget(title_label)
-
-        # 分割线
-        line = QWidget()
-        line.setFixedHeight(1)
-        line.setStyleSheet("background-color: #e0e0e0;")
-        self.layout.addWidget(line)
-
-        # 分类列表
-        self.category_list = QListWidget()
-        self.category_list.setFont(QFont("Noto Sans SC", 10))
-        # 设置列表样式（适配UOS）
-        self.category_list.setStyleSheet("""
-            QListWidget {
+        """初始化卡片UI（兼容Qt样式）"""
+        self.setFixedSize(QSize(CARD_WIDTH_3COL, CARD_HEIGHT))
+        # 替换box-shadow为border+渐变背景模拟阴影效果
+        # 移除word-wrap，改用Qt的wordWrap属性
+        self.setStyleSheet("""
+            QWidget {
+                background-color: white;
+                border-radius: 12px;
+                border: 1px solid #e8e8e8;
+            }
+            QWidget:hover {
+                border: 1px solid #d0d0d0;
+                background-color: #fafafa;
+            }
+            QLabel#name_label {
+                color: #333333;
+                font-size: 20px;
+                font-weight: bold;
+                padding: 15px 15px 5px 15px;
                 border: none;
-                background-color: #f8f8f8;
             }
-            QListWidget::item {
-                padding: 8px;
-                border-bottom: 1px solid #eee;
+            QLabel#version_label {
+                color: #666666;
+                font-size: 12px;
+                padding: 0 15px 8px 15px;
+                border: none;
             }
-            QListWidget::item:selected {
-                background-color: #0078d7;
-                color: white;
+            QLabel#desc_label {
+                color: #999999;
+                font-size: 12px;
+                padding: 0 15px 15px 15px;
+                border: none;
+                line-height: 1.4;
             }
-        """)
-        self.category_list.itemClicked.connect(self.on_category_click)
-        self.layout.addWidget(self.category_list)
-
-        # 刷新按钮
-        refresh_btn = QPushButton("刷新分类")
-        refresh_btn.setFont(QFont("Noto Sans SC", 9))
-        refresh_btn.setStyleSheet("""
             QPushButton {
                 background-color: #0078d7;
                 color: white;
                 border: none;
-                padding: 6px;
-                border-radius: 4px;
+                border-radius: 8px;
+                padding: 8px 0;
+                font-size: 16px;
+                margin: 0 15px 15px 15px;
             }
             QPushButton:hover {
                 background-color: #005a9e;
             }
+            QPushButton:pressed {
+                background-color: #004a80;
+            }
         """)
-        refresh_btn.clicked.connect(self.load_categories)
-        self.layout.addWidget(refresh_btn)
 
-    def load_categories(self):
-        """加载分类列表（修复数据类型不匹配）"""
-        try:
-            self.category_list.clear()
-            # 修改：直接获取分类数据，避免条件拼接
-            categories = self.db_util.get_data("category")
+        # 布局
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-            if not categories:
-                self.logger.warning("分类列表为空")
-                QMessageBox.information(self, "提示", "暂无分类数据")
-                return
+        # 应用名称
+        name_label = QLabel(self.app_info.get("name", "未知应用"))
+        name_label.setObjectName("name_label")
+        layout.addWidget(name_label)
 
-            for cate in categories:
-                item = QListWidgetItem(cate["name"])
-                item.setData(Qt.ItemDataRole.UserRole, cate["id"])
-                self.category_list.addItem(item)
+        # 版本号
+        version_label = QLabel(f"版本：{self.app_info.get('version', '未知版本')}")
+        version_label.setObjectName("version_label")
+        layout.addWidget(version_label)
 
-            self.logger.info(f"加载分类列表: {len(categories)}个分类")
-        except Exception as e:
-            self.logger.error(f"加载分类失败: {e}", exc_info=True)
-            QMessageBox.warning(self, "错误", f"加载分类失败: {str(e)}")
+        # 描述（截取前50个字符，使用Qt的wordWrap属性）
+        desc = self.app_info.get("description", "暂无描述")
+        if len(desc) > 50:
+            desc = desc[:50] + "..."
+        desc_label = QLabel(desc)
+        desc_label.setObjectName("desc_label")
+        desc_label.setWordWrap(True)  # Qt原生换行属性，替代word-wrap
+        layout.addWidget(desc_label)
 
-    def on_category_click(self, item):
-        """分类点击事件"""
-        cate_name = item.text()
-        self.logger.info(f"选中分类: {cate_name}")
-        self.category_clicked.emit(cate_name)
+        # 弹性空间（按钮靠下）
+        layout.addStretch()
 
-# ===================== 右侧展示区域 =====================
+        # 下载/更新按钮
+        btn_text = "更新" if "local_version" in self.app_info else "下载"
+        self.download_btn = QPushButton(btn_text)
+        self.download_btn.clicked.connect(self.on_download_click)
+        layout.addWidget(self.download_btn)
+
+    def resize_card(self, is_4col: bool):
+        """调整卡片尺寸（3列/4列）"""
+        width = CARD_WIDTH_4COL if is_4col else CARD_WIDTH_3COL
+        self.setFixedWidth(width)
+
+    def on_download_click(self):
+        """下载/更新按钮点击"""
+        url = self.app_info.get("download_url", "")
+        name = self.app_info.get("name", "未知应用")
+        self.download_clicked.emit(url, name)
+
+# ===================== 左侧菜单列表（无黑边框+兼容样式） =====================
 
 
-class RightContentArea(QWidget):
-    """右侧内容展示区域"""
+class LeftMenuList(QWidget):
+    """左侧菜单列表组件（纯扁平化，无黑边框）"""
+    menu_clicked = pyqtSignal(int)  # 菜单点击信号（传递index值）
 
     def __init__(self):
         super().__init__()
         self.logger = LogUtil.get_logger()
         self.db_util = DBUtil()
         self.init_ui()
+        self.load_menu()
 
     def init_ui(self):
-        """初始化UI"""
+        """初始化UI（无黑边框+兼容Qt样式）"""
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #f8f8f8;
+                border-radius: 12px;
+                border: none;
+            }
+            QPushButton {
+                background-color: #0078d7;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 10px;
+                font-size: 16px;
+                margin: 0 10px 10px 10px;
+            }
+            QPushButton:hover {
+                background-color: #005a9e;
+            }
+            QPushButton:pressed {
+                background-color: #004a80;
+            }
+            QLabel#title_label {
+                color: #333333;
+                font-weight: bold;
+                font-size: 18px;
+                padding: 15px 0;
+                text-align: center;
+                margin: 0;
+                border: none;
+            }
+            QListWidget {
+                border: none;
+                background-color: transparent;
+                padding: 5px 0;
+            }
+            QListWidget::item {
+                padding: 12px 15px;
+                margin: 2px 10px;
+                border-radius: 8px;
+                color: #333333;
+                font-size: 20px;
+                border: none;
+            }
+            QListWidget::item:selected {
+                background-color: #0078d7;
+                color: white;
+                border: none;
+            }
+            QListWidget::item:hover:!selected {
+                background-color: #e8f4ff;
+                color: #0078d7;
+                border: none;
+            }
+            QListWidget::item:disabled {
+                color: #999999;
+                background-color: transparent;
+                border: none;
+            }
+        """)
+
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(10, 10, 10, 10)
-        self.layout.setSpacing(10)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(0)
+
+        # 标题
+        title_label = QLabel("应用商店")
+        title_label.setObjectName("title_label")
+        self.layout.addWidget(title_label)
+
+        # 菜单列表（无黑边框）
+        self.menu_list = QListWidget()
+        self.menu_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # 移除焦点框
+        self.menu_list.itemClicked.connect(self.on_menu_click)
+        self.layout.addWidget(self.menu_list)
+
+        # 刷新按钮
+        refresh_btn = QPushButton("刷新菜单")
+        refresh_btn.clicked.connect(self.load_menu)
+        self.layout.addWidget(refresh_btn)
+
+    def load_menu(self):
+        """加载菜单列表：首页(0) → 分类(分类ID) → 应用更新(99) → 应用管理(100)"""
+        try:
+            self.menu_list.clear()
+
+            # 1. 首页（index=0）
+            home_item = QListWidgetItem("首页")
+            home_item.setData(Qt.ItemDataRole.UserRole, 0)
+            home_item.setFont(QFont("Noto Sans SC", 20))
+            self.menu_list.addItem(home_item)
+
+            # 2. 数据库分类列表（index=分类ID）
+            categories = self.db_util.get_category_list()
+            if not categories:
+                empty_item = QListWidgetItem("暂无分类数据")
+                empty_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                empty_item.setForeground(QColor("#999999"))
+                empty_item.setFont(QFont("Noto Sans SC", 15))
+                self.menu_list.addItem(empty_item)
+            else:
+                for cate in categories:
+                    cate_item = QListWidgetItem(cate["name"])
+                    cate_item.setData(Qt.ItemDataRole.UserRole, cate["id"])
+                    cate_item.setFont(QFont("Noto Sans SC", 15))
+                    self.menu_list.addItem(cate_item)
+
+            # 3. 应用更新（index=99）
+            update_item = QListWidgetItem("应用更新")
+            update_item.setData(Qt.ItemDataRole.UserRole, 99)
+            update_item.setFont(QFont("Noto Sans SC", 15))
+            self.menu_list.addItem(update_item)
+
+            # 4. 应用管理（index=100）
+            manage_item = QListWidgetItem("应用管理")
+            manage_item.setData(Qt.ItemDataRole.UserRole, 100)
+            manage_item.setFont(QFont("Noto Sans SC", 15))
+            self.menu_list.addItem(manage_item)
+
+            self.logger.info(f"加载菜单完成：首页 + {len(categories)}个分类 + 应用更新 + 应用管理")
+
+            # 默认选中首页
+            self.menu_list.setCurrentItem(home_item)
+            self.on_menu_click(home_item)
+
+        except Exception as e:
+            self.logger.error(f"加载菜单失败: {e}", exc_info=True)
+            QMessageBox.warning(self, "错误", f"加载菜单失败: {str(e)}")
+
+    def on_menu_click(self, item):
+        """菜单点击事件"""
+        menu_index = item.data(Qt.ItemDataRole.UserRole)
+        if menu_index is None:
+            return
+
+        menu_name = item.text()
+        self.logger.info(f"选中菜单: {menu_name} (index={menu_index})")
+        self.menu_clicked.emit(menu_index)
+
+# ===================== 右侧内容展示区域（卡片式布局+兼容样式） =====================
+
+
+class RightContentArea(QWidget):
+    """右侧内容展示区域（自适应卡片式布局）"""
+
+    def __init__(self):
+        super().__init__()
+        self.logger = LogUtil.get_logger()
+        self.db_util = DBUtil()
+        self.current_menu_index = 0
+        self.app_cards = []  # 存储应用卡片实例
+        self.init_ui()
+
+    def init_ui(self):
+        """初始化UI（卡片式布局+兼容Qt样式）"""
+        self.setMinimumWidth(RIGHT_MIN_WIDTH)
+        # 移除所有不兼容的CSS属性，改用Qt支持的写法
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #fafafa;
+                border: none;
+            }
+            QLabel#title_label {
+                color: #333333;
+                font-size: 20px;
+                font-weight: bold;
+                padding: 0 0 20px 0;
+                border: none;
+                margin: 0;
+            }
+            QScrollArea {
+                border: none;
+                background-color: transparent;
+            }
+            QWidget#scroll_content {
+                background-color: transparent;
+                padding: 10px;
+            }
+            QLabel#home_desc {
+                color: #666666;
+                font-size: 14px;
+                line-height: 1.8;
+                padding: 20px;
+                background-color: white;
+                border-radius: 12px;
+                border: 1px solid #e8e8e8;
+            }
+            QTableWidget {
+                background-color: white;
+                border-radius: 12px;
+                border: 1px solid #e8e8e8;
+                gridline-color: #f0f0f0;
+            }
+            QHeaderView::section {
+                background-color: #f8f8f8;
+                border: none;
+                padding: 12px;
+                font-size: 14px;
+                color: #333333;
+            }
+            QTableWidget::item {
+                padding: 10px;
+                font-size: 14px;
+                color: #333333;
+                border: none;
+            }
+        """)
+
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(20, 20, 20, 20)
+        self.layout.setSpacing(20)
 
         # 顶部标题
-        self.title_label = QLabel("应用列表")
-        self.title_label.setFont(QFont("Noto Sans SC", 14, QFont.Weight.Bold))
-        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.title_label = QLabel("统信UOS内网应用商店 - 首页")
+        self.title_label.setObjectName("title_label")
         self.layout.addWidget(self.title_label)
 
-        # 标签页
-        self.tab_widget = QTabWidget()
-        self.tab_widget.setFont(QFont("Noto Sans SC", 10))
-        self.layout.addWidget(self.tab_widget)
+        # 滚动区域（容纳卡片布局）
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.layout.addWidget(self.scroll_area)
 
-        # 1. 应用列表标签页
-        self.app_list_widget = QWidget()
-        self.app_list_layout = QVBoxLayout(self.app_list_widget)
+        # 滚动内容容器
+        self.scroll_content = QWidget()
+        self.scroll_content.setObjectName("scroll_content")
+        self.card_layout = QGridLayout(self.scroll_content)
+        self.card_layout.setSpacing(20)
+        self.scroll_area.setWidget(self.scroll_content)
 
-        # 应用表格
-        self.app_table = QTableWidget()
-        self.app_table.setColumnCount(6)
-        self.app_table.setHorizontalHeaderLabels([
-            "应用名称", "版本", "大小", "下载量", "提供者", "操作"
-        ])
-        # 自适应列宽
-        self.app_table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.Stretch)
-        # 设置表格样式
-        self.app_table.setStyleSheet("""
-            QTableWidget {
-                border: 1px solid #eee;
-                gridline-color: #eee;
+        # 初始化各内容
+        self.init_home_content()
+        self.show_home_content()
+
+        # 监听窗口大小变化，自适应卡片布局
+        self.resize_event_timer = QTimer()
+        self.resize_event_timer.setSingleShot(True)
+        self.resize_event_timer.timeout.connect(self.adjust_card_layout)
+        self.resizeEvent = self.on_resize  # 重写resize事件
+
+    def on_resize(self, event):
+        """窗口大小变化事件"""
+        self.resize_event_timer.start(100)  # 防抖
+        super().resizeEvent(event)
+
+    def adjust_card_layout(self):
+        """自适应调整卡片布局（3列/4列）"""
+        if not self.app_cards:
+            return
+
+        # 判断是否切换为4列
+        is_4col = self.width() > CARD_LAYOUT_SWITCH_WIDTH
+        col_count = 4 if is_4col else 3
+
+        # 重新排列卡片
+        for idx, card in enumerate(self.app_cards):
+            card.resize_card(is_4col)
+            row = idx // col_count
+            col = idx % col_count
+            self.card_layout.addWidget(card, row, col)
+
+    def clear_cards(self):
+        """清空所有卡片"""
+        for card in self.app_cards:
+            card.setParent(None)
+        self.app_cards.clear()
+
+    # -------------------- 首页内容 --------------------
+    def init_home_content(self):
+        """初始化首页内容"""
+        self.home_widget = QWidget()
+        home_layout = QVBoxLayout(self.home_widget)
+        home_layout.setContentsMargins(0, 0, 0, 0)
+        home_layout.setSpacing(20)
+
+        # 首页介绍
+        home_desc = QLabel("""
+统信UOS内网应用商店
+====================
+欢迎使用统信UOS内网应用商店！
+
+本应用商店专为企业内网环境打造，提供安全、稳定的应用分发与管理服务：
+• 丰富的应用分类：涵盖办公、开发、设计、工具等各类应用
+• 一键安装更新：自动检测本地应用版本，便捷更新
+• 本地应用管理：查看已安装应用，统一管理
+
+使用说明：
+• 左侧菜单选择「应用分类」浏览可用应用
+• 「应用更新」查看可升级的本地应用
+• 「应用管理」查看已安装的本地应用
+        """)
+        home_desc.setObjectName("home_desc")
+        home_desc.setWordWrap(True)  # Qt原生换行
+        home_layout.addWidget(home_desc)
+
+        # 统计信息
+        stats_widget = QWidget()
+        stats_widget.setStyleSheet("""
+            QWidget {
+                background-color: white;
+                border-radius: 12px;
+                border: 1px solid #e8e8e8;
+                padding: 15px;
             }
-            QHeaderView::section {
-                background-color: #f8f8f8;
+            QLabel {
+                font-size: 14px;
+                color: #666666;
                 border: none;
-                padding: 8px;
-            }
-            QTableWidget::item {
-                padding: 4px;
+                padding: 0 15px 0 0;
             }
         """)
-        self.app_list_layout.addWidget(self.app_table)
-        self.tab_widget.addTab(self.app_list_widget, "应用列表")
+        stats_layout = QHBoxLayout(stats_widget)
 
-        # 2. 应用更新标签页
-        self.update_widget = QWidget()
-        self.update_layout = QVBoxLayout(self.update_widget)
+        cate_count = len(self.db_util.get_category_list())
+        cate_label = QLabel(f"应用分类：{cate_count} 个")
+        stats_layout.addWidget(cate_label)
 
-        self.update_table = QTableWidget()
-        self.update_table.setColumnCount(4)
-        self.update_table.setHorizontalHeaderLabels([
-            "应用名称", "当前版本", "最新版本", "操作"
-        ])
-        self.update_table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.Stretch)
-        self.update_table.setStyleSheet("""
-            QTableWidget {
-                border: 1px solid #eee;
-                gridline-color: #eee;
-            }
-            QHeaderView::section {
-                background-color: #f8f8f8;
-                border: none;
-                padding: 8px;
-            }
-            QTableWidget::item {
-                padding: 4px;
-            }
-        """)
-        self.update_layout.addWidget(self.update_table)
-        self.tab_widget.addTab(self.update_widget, "应用更新")
+        local_app_count = len(SystemAppUtil.get_local_installed_apps())
+        local_label = QLabel(f"本地应用：{local_app_count} 个")
+        stats_layout.addWidget(local_label)
 
-        # 3. 应用管理标签页
-        self.manage_widget = QWidget()
-        self.manage_layout = QVBoxLayout(self.manage_widget)
+        home_layout.addWidget(stats_widget)
 
-        self.manage_table = QTableWidget()
-        self.manage_table.setColumnCount(2)
-        self.manage_table.setHorizontalHeaderLabels([
-            "应用名称", "版本"
-        ])
-        self.manage_table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.Stretch)
-        self.manage_table.setStyleSheet("""
-            QTableWidget {
-                border: 1px solid #eee;
-                gridline-color: #eee;
-            }
-            QHeaderView::section {
-                background-color: #f8f8f8;
-                border: none;
-                padding: 8px;
-            }
-            QTableWidget::item {
-                padding: 4px;
-            }
-        """)
-        self.manage_layout.addWidget(self.manage_table)
-        self.tab_widget.addTab(self.manage_widget, "应用管理")
+    def show_home_content(self):
+        """显示首页内容"""
+        self.clear_cards()
+        self.title_label.setText("统信UOS内网应用商店 - 首页")
+        # 替换滚动区域内容为首页
+        self.scroll_area.takeWidget()
+        self.scroll_area.setWidget(self.home_widget)
 
-    def load_category_apps(self, cate_name: str):
-        """加载指定分类的应用（修复分类查询）"""
+    # -------------------- 分类应用卡片展示 --------------------
+    def show_category_content(self, cate_id: int):
+        """显示分类应用卡片"""
+        self.scroll_area.takeWidget()
+        self.scroll_area.setWidget(self.scroll_content)
+        self.clear_cards()
+
+        # 获取分类名称
+        cate_name = self.get_cate_name_by_id(cate_id)
+        self.title_label.setText(f"应用分类 - {cate_name}")
+
+        # 加载应用数据
         try:
-            self.title_label.setText(f"{cate_name} - 应用列表")
+            softs = self.db_util.get_software_by_category(cate_id)
+            if not softs:
+                QMessageBox.information(self, "提示", "该分类下暂无应用")
+                return
 
-            if cate_name == "应用更新":
-                self.load_updatable_apps()
-                self.tab_widget.setCurrentWidget(self.update_widget)
-            elif cate_name == "应用管理":
-                self.load_managed_apps()
-                self.tab_widget.setCurrentWidget(self.manage_widget)
-            else:
-                # 加载普通分类应用（修复：使用安全查询）
-                self.load_normal_apps(cate_name)
-                self.tab_widget.setCurrentWidget(self.app_list_widget)
+            # 创建应用卡片
+            col_count = 4 if self.width() > CARD_LAYOUT_SWITCH_WIDTH else 3
+            for idx, soft in enumerate(softs):
+                # 补充默认描述（如果没有）
+                if not soft.get("description"):
+                    soft["description"] = f"{soft.get('name')} - 官方正版应用，安全可靠"
+
+                card = AppCard(soft)
+                card.download_clicked.connect(self.download_app)
+                self.app_cards.append(card)
+
+                # 布局卡片
+                row = idx // col_count
+                col = idx % col_count
+                self.card_layout.addWidget(card, row, col)
+
+            self.logger.info(f"加载分类ID={cate_id}的应用卡片: {len(softs)}个")
+
         except Exception as e:
             self.logger.error(f"加载分类应用失败: {e}", exc_info=True)
             QMessageBox.warning(self, "错误", f"加载应用失败: {str(e)}")
 
-    def load_normal_apps(self, cate_name: str):
-        """加载普通分类应用（修复数据类型不匹配）"""
-        # 修改：使用安全的分类查询方法
-        category = self.db_util.get_category_by_name(cate_name)
-        if not category:
-            self.app_table.setRowCount(0)
-            QMessageBox.information(self, "提示", f"分类 {cate_name} 不存在或无数据")
-            return
+    # -------------------- 应用更新卡片展示 --------------------
+    def show_update_content(self):
+        """显示应用更新卡片"""
+        self.scroll_area.takeWidget()
+        self.scroll_area.setWidget(self.scroll_content)
+        self.clear_cards()
 
-        cate_id = category["id"]
-        # 获取关联的软件ID（修改：使用参数化条件）
-        c2s = self.db_util.get_data(
-            "category2software", f"category_id = {cate_id}")
-        soft_ids = [item["software_id"] for item in c2s]
+        self.title_label.setText("应用更新 - 本地可更新应用")
 
-        if not soft_ids:
-            self.app_table.setRowCount(0)
-            QMessageBox.information(self, "提示", f"分类 {cate_name} 下暂无应用")
-            return
+        try:
+            updatable_apps = self.db_util.get_updatable_apps()
+            if not updatable_apps:
+                QMessageBox.information(self, "提示", "暂无需要更新的应用")
+                return
 
-        # 获取软件信息
-        softs = self.db_util.get_data(
-            "software", f"id IN ({','.join(map(str, soft_ids))})")
+            # 创建更新卡片
+            col_count = 4 if self.width() > CARD_LAYOUT_SWITCH_WIDTH else 3
+            for idx, app in enumerate(updatable_apps):
+                # 补充描述
+                app["description"] = f"当前版本：{app['local_version']}，最新版本：{app['remote_version']}"
+                card = AppCard(app)
+                card.download_clicked.connect(self.download_app)
+                self.app_cards.append(card)
 
-        # 填充表格
-        self.app_table.setRowCount(len(softs))
-        for row, soft in enumerate(softs):
-            # 应用名称
-            self.app_table.setItem(row, 0, QTableWidgetItem(soft["name"]))
-            # 版本
-            self.app_table.setItem(
-                row, 1, QTableWidgetItem(soft["version"] or ""))
-            # 大小
-            self.app_table.setItem(
-                row, 2, QTableWidgetItem(soft["size"] or ""))
-            # 下载量
-            self.app_table.setItem(row, 3, QTableWidgetItem(
-                str(soft["download_count"] or 0)))
-            # 提供者（简化处理）
-            self.app_table.setItem(row, 4, QTableWidgetItem("UOS官方"))
+                # 布局卡片
+                row = idx // col_count
+                col = idx % col_count
+                self.card_layout.addWidget(card, row, col)
 
-            # 下载按钮
-            download_btn = QPushButton("下载")
-            download_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #0078d7;
-                    color: white;
-                    border: none;
-                    padding: 4px 8px;
-                    border-radius: 4px;
-                }
-                QPushButton:hover {
-                    background-color: #005a9e;
-                }
-            """)
-            download_btn.clicked.connect(
-                lambda checked, url=soft["download_url"], name=soft["name"]: self.download_app(url, name))
-            self.app_table.setCellWidget(row, 5, download_btn)
+            self.logger.info(f"加载可更新应用卡片: {len(updatable_apps)}个")
 
-        self.logger.info(f"加载{cate_name}分类应用: {len(softs)}条")
+        except Exception as e:
+            self.logger.error(f"加载可更新应用失败: {e}", exc_info=True)
+            QMessageBox.warning(self, "错误", f"加载可更新应用失败: {str(e)}")
 
-    def load_updatable_apps(self):
-        """加载可更新应用"""
-        updatable_apps = SystemAppUtil.get_updatable_apps(self.db_util)
+    # -------------------- 应用管理（表格展示） --------------------
+    def show_manage_content(self):
+        """显示应用管理（表格布局，本地应用）"""
+        self.scroll_area.takeWidget()
+        self.clear_cards()
 
-        if not updatable_apps:
-            self.update_table.setRowCount(0)
-            QMessageBox.information(self, "提示", "暂无可更新应用")
-            return
+        self.title_label.setText("应用管理 - 本地已安装应用")
 
-        self.update_table.setRowCount(len(updatable_apps))
-        for row, app in enumerate(updatable_apps):
-            # 应用名称
-            self.update_table.setItem(row, 0, QTableWidgetItem(app["name"]))
-            # 当前版本
-            self.update_table.setItem(
-                row, 1, QTableWidgetItem(app["local_version"]))
-            # 最新版本
-            self.update_table.setItem(
-                row, 2, QTableWidgetItem(app["remote_version"]))
+        # 创建应用管理表格
+        manage_widget = QWidget()
+        manage_layout = QVBoxLayout(manage_widget)
 
-            # 更新按钮
-            update_btn = QPushButton("更新")
-            update_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #0078d7;
-                    color: white;
-                    border: none;
-                    padding: 4px 8px;
-                    border-radius: 4px;
-                }
-                QPushButton:hover {
-                    background-color: #005a9e;
-                }
-            """)
-            update_btn.clicked.connect(
-                lambda checked, url=app["download_url"], name=app["name"]: self.download_app(url, name))
-            self.update_table.setCellWidget(row, 3, update_btn)
+        self.manage_table = QTableWidget()
+        self.manage_table.setColumnCount(2)
+        self.manage_table.setHorizontalHeaderLabels(["应用名称", "版本"])
+        self.manage_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Stretch)
 
-    def load_managed_apps(self):
-        """加载本地已装应用"""
+        # 加载本地应用
         local_apps = SystemAppUtil.get_local_installed_apps()
-
         if not local_apps:
             self.manage_table.setRowCount(0)
-            QMessageBox.information(self, "提示", "未检测到本地应用")
-            return
+            QMessageBox.information(self, "提示", "未检测到本地已安装应用")
+        else:
+            self.manage_table.setRowCount(len(local_apps))
+            for row, app in enumerate(local_apps):
+                self.manage_table.setItem(
+                    row, 0, QTableWidgetItem(app["name"]))
+                self.manage_table.setItem(
+                    row, 1, QTableWidgetItem(app["version"]))
 
-        self.manage_table.setRowCount(len(local_apps))
-        for row, app in enumerate(local_apps):
-            # 应用名称
-            self.manage_table.setItem(row, 0, QTableWidgetItem(app["name"]))
-            # 版本
-            self.manage_table.setItem(row, 1, QTableWidgetItem(app["version"]))
+        manage_layout.addWidget(self.manage_table)
+        self.scroll_area.setWidget(manage_widget)
+
+    # -------------------- 通用方法 --------------------
+    def get_cate_name_by_id(self, cate_id: int) -> str:
+        """通过分类ID获取名称"""
+        categories = self.db_util.get_category_list()
+        for cate in categories:
+            if cate["id"] == cate_id:
+                return cate["name"]
+        return "未知分类"
 
     def download_app(self, url: str, app_name: str):
-        """下载应用（模拟进度）"""
+        """下载/更新应用"""
         if not ValidateUtil.validate_url(url):
             QMessageBox.warning(self, "错误", "下载链接无效")
             return
 
-        # 显示下载进度框
         self.download_dialog = DownloadDialog(f"下载 {app_name}", self)
         self.download_dialog.show()
 
-        # 模拟下载进度
+        # 模拟下载
         self.progress_value = 0
         self.timer = QTimer()
         self.timer.timeout.connect(self.simulate_download)
@@ -424,11 +684,19 @@ class RightContentArea(QWidget):
             self.timer.stop()
             return
 
-        status = f"下载中... {self.progress_value}%"
-        if self.progress_value == 100:
-            status = "下载完成！"
-
+        status = f"下载中... {self.progress_value}%" if self.progress_value < 100 else "下载完成！"
         self.download_dialog.update_progress(self.progress_value, status)
+
+    def switch_content_by_menu_index(self, menu_index: int):
+        """根据菜单index切换内容"""
+        if menu_index == 0:
+            self.show_home_content()
+        elif menu_index == 99:
+            self.show_update_content()
+        elif menu_index == 100:
+            self.show_manage_content()
+        else:
+            self.show_category_content(menu_index)
 
 # ===================== 主窗口 =====================
 
@@ -445,45 +713,48 @@ class AppStoreMainWindow(QMainWindow):
 
     def init_ui(self):
         """初始化主窗口"""
-        # 窗口配置
         self.setWindowTitle("统信UOS内网应用商店")
         self.setGeometry(100, 100, 1200, 800)
-        self.setMinimumSize(1000, 600)
-
-        # 设置窗口样式（适配UOS）
+        self.setMinimumSize(900, 600)  # 整体最小尺寸
         self.setStyleSheet("""
             QMainWindow {
-                background-color: #ffffff;
+                background-color: #fafafa;
+                border: none;
             }
         """)
 
         # 中心组件
         central_widget = QWidget()
+        central_widget.setStyleSheet("""
+            QWidget {
+                background-color: #fafafa;
+                border: none;
+            }
+        """)
         self.setCentralWidget(central_widget)
 
         # 主布局
         main_layout = QHBoxLayout(central_widget)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(5)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(20)
 
-        # 左侧分类列表
-        self.left_panel = LeftCategoryList()
-        self.left_panel.setMaximumWidth(200)
-        self.left_panel.setMinimumWidth(180)
-        self.left_panel.category_clicked.connect(self.on_category_click)
+        # 左侧菜单
+        self.left_panel = LeftMenuList()
+        self.left_panel.setMaximumWidth(240)
+        self.left_panel.setMinimumWidth(220)
+        self.left_panel.menu_clicked.connect(self.on_menu_click)
         main_layout.addWidget(self.left_panel)
 
         # 右侧内容区域
         self.right_panel = RightContentArea()
         main_layout.addWidget(self.right_panel)
 
-    def on_category_click(self, cate_name: str):
-        """分类点击回调"""
-        self.right_panel.load_category_apps(cate_name)
+    def on_menu_click(self, menu_index: int):
+        """菜单点击回调"""
+        self.right_panel.switch_content_by_menu_index(menu_index)
 
     def check_self_update(self):
-        """检查应用商店自身更新"""
-        # 后台线程检查更新
+        """检查自更新"""
         class UpdateCheckThread(QThread):
             result = pyqtSignal(dict)
 
@@ -491,13 +762,12 @@ class AppStoreMainWindow(QMainWindow):
                 result = AppStoreUpdateUtil.check_self_update(DBUtil())
                 self.result.emit(result)
 
-        # 启动线程
         self.update_thread = UpdateCheckThread()
         self.update_thread.result.connect(self.on_self_update_check)
         self.update_thread.start()
 
     def on_self_update_check(self, result: dict):
-        """自更新检查结果回调"""
+        """自更新回调"""
         if result["need_update"]:
             reply = QMessageBox.question(
                 self, "应用商店更新",
@@ -506,7 +776,6 @@ class AppStoreMainWindow(QMainWindow):
                 QMessageBox.StandardButton.No
             )
             if reply == QMessageBox.StandardButton.Yes:
-                # 执行更新
                 if AppStoreUpdateUtil.do_self_update(result.get("download_url", "")):
                     QMessageBox.information(self, "成功", "更新完成，请重启应用商店")
                     self.close()
@@ -517,6 +786,31 @@ class AppStoreMainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """关闭事件"""
-        self.db_util.close()
+        self.db_util.close_remote_conn()
         self.logger.info("应用商店已关闭")
         event.accept()
+
+
+# ===================== 程序入口 =====================
+if __name__ == "__main__":
+    LogUtil.init_logger()
+
+    app = QApplication(sys.argv)
+    app.setStyleSheet("""
+        QMessageBox {
+            font-size: 14px;
+            border-radius: 12px;
+            border: 1px solid #e8e8e8;
+        }
+        QMessageBox QPushButton {
+            padding: 8px 16px;
+            font-size: 14px;
+            border-radius: 8px;
+            border: none;
+        }
+    """)
+
+    main_window = AppStoreMainWindow()
+    main_window.show()
+
+    sys.exit(app.exec())

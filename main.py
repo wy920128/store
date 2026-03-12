@@ -7,7 +7,7 @@ from layout import AppStoreMainWindow
 import sys
 import os
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtGui import QFont, QIcon
+from PyQt6.QtGui import QFont
 from PyQt6.QtCore import Qt
 
 # 确保导入路径正确
