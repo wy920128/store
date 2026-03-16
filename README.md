@@ -2,7 +2,7 @@
  * @Author: 王野 18545455617@163.com
  * @Date: 2026-03-10 13:32:41
  * @LastEditors: 王野 18545455617@163.com
- * @LastEditTime: 2026-03-10 13:34:53
+ * @LastEditTime: 2026-03-16 16:11:16
  * @FilePath: /store/README.md
  * @Description: README.md
 -->
@@ -46,3 +46,30 @@
 git clone http://192.168.1.99/xxx/intranet-app-store.git
 # 若无内网仓库，直接将项目压缩包上传至服务器并解压
 unzip intranet-app-store.zip -d /opt/intranet-app-store
+
+
+/media/wangye/DATA1/Projects/static/store/  # 源根目录
+├── dists/
+│   └── uos/                     # 发行版名称
+│       ├── wangye/                 # 组件名称
+│       │   └── binary-arm64/       # 架构目录（你的 arm64 系统）
+│       │       ├── Packages        # 包索引（明文）
+│       │       ├── Packages.gz     # 包索引（压缩）
+│       │       └── Packages.bz2    # 包索引（压缩，可选）
+│       ├── Release                 # 源索引文件（必需）
+└── pool/
+    └── main/                       # 对应组件 main
+        └── [包名首字母]/            # 按包名首字母分类
+            └── xxx.deb             # rm64 架构 deb 包
+
+
+
+python3-pymysql
+python3-dotenv
+python3-requests
+python3-pyqt5
+python3-pyqt5.qtwebkit
+
+
+sudo pip3 install pyqt5==5.15.7
+sudo pip3 install pymysql==1.0.2 python-dotenv==0.21.1 requests==2.28.2
