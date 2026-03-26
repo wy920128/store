@@ -1,0 +1,51 @@
+.main-container {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.cat-box {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.software-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+.app-panel {
+  border-radius: 12px;
+  overflow: hidden;
+}
+.app-inner {
+  display: flex;
+  padding: 12px;
+  gap: 12px;
+}
+.app-img {
+  width: 68px;
+  height: 68px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #eee;
+}
+.app-info {
+  flex: 1;
+}
+.app-info h3 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+.app-info p {
+  margin: 4px 0;
+  font-size: 13px;
+  color: #666;
+}
+.dev {
+  color: #e63946;
+  font-weight: 500;
+}
+.page-box {
+  display: flex;
+  justify-content: flex-end;
+}
