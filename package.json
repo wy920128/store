@@ -12,10 +12,10 @@
     "build:fast": "tauri build --bundle none"
   },
   "dependencies": {
-    "@devui-design/icons": "^1.4.0",
     "@tauri-apps/api": "^2",
-    "vue": "^3.5.13",
-    "vue-devui": "^1.6.36"
+    "element-plus": "^2.13.6",
+    "remixicon": "^4.9.1",
+    "vue": "^3.5.13"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
@@ -23,8 +23,5 @@
     "typescript": "~5.6.2",
     "vite": "^6.0.3",
     "vue-tsc": "^2.1.10"
-  },
-  "resolutions": {
-    "esbuild": "npm:@esbuild/linux-arm64@latest"
   }
 }

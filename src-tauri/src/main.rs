@@ -108,11 +108,11 @@ fn get_categories() -> Result<Vec<Category>, String> {
 }
 
 #[tauri::command]
-fn get_software_by_category(
+fn get_software(
     category_id: u32,
+    keyword: String,
     page: u32,
     page_size: u32,
-    keyword: String,
 ) -> Result<Vec<Software>, String> {
     let mut conn: PooledConn = get_conn()?;
     let offset: u32 = (page - 1) * page_size;
@@ -126,6 +126,8 @@ fn get_software_by_category(
     if category_id > 0 {
         sql.push_str(" AND c2s.category_id = ? ");
         params.push(category_id.into());
+    } else {
+        sql.push_str(" AND s.top = 1 ");
     }
     if !keyword.is_empty() {
         sql.push_str(" AND s.name LIKE ? ");
@@ -248,7 +250,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_system_info,
             get_categories,
-            get_software_by_category,
+            get_software,
             get_software_count,
             install_package
         ])

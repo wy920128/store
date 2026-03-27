@@ -13,9 +13,9 @@
     "windows": [
       {
         "title": "内网应用商店",
-        "width": 800,
-        "height": 600,
-        "resizable": false,
+        "width": 1000,
+        "height": 750,
+        "resizable": true,
         "fullscreen": false,
         "decorations": true
       }

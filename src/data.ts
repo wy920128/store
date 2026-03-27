@@ -1,8 +1,9 @@
-import { reactive, ref } from "vue";
+import { reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { CategoryT, SoftwareT, SystemT } from "./types";
-
-export const systemInfo: {
+import { TabsPaneContext } from "element-plus";
+// 系统数据
+export const systemData: {
   name: string;
   major: number;
   minor: number;
@@ -15,8 +16,7 @@ export const systemInfo: {
   patch: 0,
   author: `王野`,
 });
-
-// 搜索条件
+// 搜索数据
 export const searchData: {
   keyword: string;
   funcSearch: (keyword: string) => void;
@@ -28,19 +28,30 @@ export const searchData: {
     loadData();
   },
 });
-
+// 标签页数据
 export const tabsData: {
   activeId: string;
+  category0: CategoryT;
   categoryList: CategoryT[];
   softwareList: SoftwareT[];
-  funcTabChange: (id: string) => void;
+  funcTabChange: (tab: TabsPaneContext) => void;
   funcInstall: (id: string, pkg: string) => void;
 } = reactive({
   activeId: `0`,
+  category0: {
+    id: 0,
+    name: `首页`,
+    sort: 0,
+    icon: `ri-home-9-line`,
+    description: `首页推荐应用`,
+    created_time: `2026-03-27 14:20:46`,
+    updated_time: `2026-03-27 14:20:46`,
+    deleted_time: null,
+  },
   categoryList: [],
   softwareList: [],
-  funcTabChange(id: string) {
-    tabsData.activeId = String(id);
+  funcTabChange(tab: TabsPaneContext) {
+    tabsData.activeId = String(tab.props.name);
     pageData.pageIndex = 1;
     loadData();
   },
@@ -52,33 +63,22 @@ export const tabsData: {
     } catch {}
   },
 });
-
-// 应用列表
-export const list = ref<SoftwareT[]>([]);
-
 // 分页
 export const pageData = reactive({
   total: 0,
   pageIndex: 1,
-  pageSize: 9,
+  pageSize: 6,
   funcPageChange(page: number) {
     pageData.pageIndex = page;
     loadData();
   },
 });
-
-// 初始化应用
-export async function initApp() {
-  Object.assign(systemInfo, await invoke<SystemT>("get_system_info"));
-  tabsData.categoryList = await invoke<CategoryT[]>("get_categories");
-  await loadData();
-}
-
 // 加载数据
 export async function loadData() {
   try {
+    console.log(searchData.keyword)
     const [items, count] = await Promise.all([
-      invoke<SoftwareT[]>("get_software_by_category", {
+      invoke<SoftwareT[]>("get_software", {
         categoryId: Number(tabsData.activeId),
         keyword: searchData.keyword,
         page: pageData.pageIndex,
@@ -89,24 +89,18 @@ export async function loadData() {
         keyword: searchData.keyword,
       }),
     ]);
-    list.value = items;
+    tabsData.softwareList = items;
     pageData.total = count;
   } catch (err) {
     console.error(err);
   }
 }
-
-// 切换分页
-export function changePage(p: number) {
-  pageData.pageIndex = p;
-  loadData();
-}
-
-// 安装应用
-export async function installApp(id: string, pkg: string) {
-  if (!pkg) return;
-  try {
-    await invoke("install_package", { softwareId: id, package: pkg });
-    loadData();
-  } catch {}
+// 初始化应用
+export async function initApp() {
+  Object.assign(systemData, await invoke<SystemT>("get_system_info"));
+  tabsData.categoryList = [
+    tabsData.category0,
+    ...(await invoke<CategoryT[]>("get_categories")),
+  ];
+  await loadData();
 }
