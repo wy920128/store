@@ -1,25 +1,36 @@
 <template>
   <div class="app-container">
-    <Header @search="funcSearch" />
+    <Header @funcSearch="doSearch" />
     <Main
-      @categoryChange="selectCat"
-      @install="install"
-      @pageChange="loadData"
+      :cats="cats"
+      :list="list"
+      :current-cat-id="currentCatId"
+      :page-data="pageData"
+      @category-change="changeCategory"
+      @func_page-change="changePage"
+      @install="installApp"
     />
   </div>
 </template>
-
 <script setup lang="ts">
 import { onMounted } from "vue";
-import Header from "./components/header/index.vue";
-import Main from "./components/main/index.vue";
-import { initApp, loadData, selectCat, install, funcSearch } from "./data.ts";
-
+import Header from "./Header.vue";
+import Main from "./Main.vue";
+import {
+  initApp,
+  doSearch,
+  changeCategory,
+  changePage,
+  installApp,
+  cats,
+  list,
+  currentCatId,
+  pageData,
+} from "./data.ts";
 onMounted(() => {
   initApp();
 });
 </script>
-
 <style scoped>
 .app-container {
   padding: 24px;

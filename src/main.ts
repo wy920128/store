@@ -8,10 +8,8 @@
  */
 import { createApp } from "vue";
 import App from "./App.vue";
-
 // DevUI
 import "vue-devui/style.css";
 import "@devui-design/icons/icomoon/devui-icon.css";
 import DevUI from "vue-devui";
-
 createApp(App).use(DevUI).mount(`#app`);
