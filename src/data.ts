@@ -1,93 +1,112 @@
-// src/data.ts
 import { reactive, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import type { Category } from "./types/category";
-import type { Software } from "./types/software";
-import type { SystemInfo } from "./types/system";
-export const sysInfo = ref<SystemInfo>({
-  name: "",
+import { CategoryT, SoftwareT, SystemT } from "./types";
+
+export const systemInfo: {
+  name: string;
+  major: number;
+  minor: number;
+  patch: number;
+  author: string;
+} = reactive({
+  name: ``,
   major: 1,
   minor: 0,
   patch: 0,
-  author: "",
+  author: `王野`,
 });
-export const cats = ref<Category[]>([]);
-export const list = ref<Software[]>([]);
-export const currentCatId = ref(0);
-export const keyword = ref("");
+
+// 搜索条件
+export const searchData: {
+  keyword: string;
+  funcSearch: (keyword: string) => void;
+} = reactive({
+  keyword: ``,
+  funcSearch(keyword: string) {
+    searchData.keyword = keyword;
+    pageData.pageIndex = 1;
+    loadData();
+  },
+});
+
+export const tabsData: {
+  activeId: string;
+  categoryList: CategoryT[];
+  softwareList: SoftwareT[];
+  funcTabChange: (id: string) => void;
+  funcInstall: (id: string, pkg: string) => void;
+} = reactive({
+  activeId: `0`,
+  categoryList: [],
+  softwareList: [],
+  funcTabChange(id: string) {
+    tabsData.activeId = String(id);
+    pageData.pageIndex = 1;
+    loadData();
+  },
+  async funcInstall(id: string, pkg: string) {
+    if (!pkg) return;
+    try {
+      await invoke("install_package", { softwareId: id, package: pkg });
+      loadData();
+    } catch {}
+  },
+});
+
+// 应用列表
+export const list = ref<SoftwareT[]>([]);
+
+// 分页
 export const pageData = reactive({
   total: 0,
   pageIndex: 1,
   pageSize: 9,
-  maxItems: 5,
+  funcPageChange(page: number) {
+    pageData.pageIndex = page;
+    loadData();
+  },
 });
-// 初始化
+
+// 初始化应用
 export async function initApp() {
-  await loadSystemInfo();
-  await loadCategories();
+  Object.assign(systemInfo, await invoke<SystemT>("get_system_info"));
+  tabsData.categoryList = await invoke<CategoryT[]>("get_categories");
   await loadData();
 }
-// 系统信息
-async function loadSystemInfo() {
-  try {
-    const res = await invoke<SystemInfo>("get_system_info");
-    Object.assign(sysInfo.value, res);
-  } catch (e) {}
-}
-// 加载分类
-async function loadCategories() {
-  try {
-    const data = await invoke<Category[]>("get_categories");
-    cats.value = data;
-  } catch (e) {}
-}
-// 搜索
-export function doSearch(val: string) {
-  keyword.value = val;
-  pageData.pageIndex = 1;
-  loadData();
-}
-// 切换分类
-export function changeCategory(id: number) {
-  currentCatId.value = id;
-  pageData.pageIndex = 1;
-  loadData();
-}
-// 切换页码
-export function changePage(p: number) {
-  console.log("✅ data.ts 接收新页码 =", p);
-  pageData.pageIndex = p;
-  loadData();
-}
+
 // 加载数据
 export async function loadData() {
   try {
-    console.log("📦 开始请求数据，页码 =", pageData.pageIndex);
-    const [listData, count] = await Promise.all([
-      invoke<Software[]>("get_software_by_category", {
-        categoryId: currentCatId.value,
+    const [items, count] = await Promise.all([
+      invoke<SoftwareT[]>("get_software_by_category", {
+        categoryId: Number(tabsData.activeId),
+        keyword: searchData.keyword,
         page: pageData.pageIndex,
         pageSize: pageData.pageSize,
-        keyword: keyword.value,
       }),
       invoke<number>("get_software_count", {
-        categoryId: currentCatId.value,
-        keyword: keyword.value,
+        categoryId: Number(tabsData.activeId),
+        keyword: searchData.keyword,
       }),
     ]);
-    list.value = listData;
+    list.value = items;
     pageData.total = count;
-    console.log("✅ 数据加载完成，列表长度 =", listData.length);
-    console.log("✅ 总数 total =", count);
   } catch (err) {
-    console.error("加载失败", err);
+    console.error(err);
   }
 }
-// 安装
+
+// 切换分页
+export function changePage(p: number) {
+  pageData.pageIndex = p;
+  loadData();
+}
+
+// 安装应用
 export async function installApp(id: string, pkg: string) {
-  if (!pkg) return alert("无安装包名");
+  if (!pkg) return;
   try {
     await invoke("install_package", { softwareId: id, package: pkg });
     loadData();
-  } catch (err) {}
+  } catch {}
 }
