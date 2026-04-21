@@ -1,3 +1,11 @@
+/*
+ * @Author: wangye 18545455617@163.com
+ * @Date: 2026-04-20 16:27:48
+ * @LastEditors: wangye 18545455617@163.com
+ * @LastEditTime: 2026-04-21 09:22:02
+ * @FilePath: /store/src/data.ts
+ * @Description: 数据管理
+ */
 import { ref, reactive } from 'vue';
 import { invoke } from '@tauri-apps/api/tauri';
 import type { Category, LogInfo, Software, SystemInfo } from './type'

@@ -1,7 +1,12 @@
-/**
- * 分类信息
- * 对应 Rust Category
+/*
+ * @Author: wangye 18545455617@163.com
+ * @Date: 2026-04-20 16:30:23
+ * @LastEditors: wangye 18545455617@163.com
+ * @LastEditTime: 2026-04-21 09:21:38
+ * @FilePath: /store/src/type.d.ts
+ * @Description: 数据类型定义
  */
+// 分类信息
 export interface Category {
   id: number
   name: string
@@ -13,10 +18,7 @@ export interface Category {
   deleted_time: string | null
 }
 
-/**
- * 应用信息
- * 对应 Rust Software
- */
+// 应用信息
 export interface Software {
   id: string
   name: string
@@ -34,10 +36,7 @@ export interface Software {
   deleted_time: string | null
 }
 
-/**
- * 系统信息
- * 对应 Rust SystemInfo
- */
+// 系统信息
 export interface SystemInfo {
   name: string
   major: number
@@ -50,10 +49,7 @@ export interface SystemInfo {
   deleted_time: string | null
 }
 
-/**
- * 日志信息
- * 对应 Rust LogInfo
- */
+// 日志信息
 export interface LogInfo {
   type: `info` | `error`;
   message: string;

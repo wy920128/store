@@ -1,3 +1,11 @@
+<!--
+ * @Author: wangye 18545455617@163.com
+ * @Date: 2026-04-20 14:45:03
+ * @LastEditors: wangye 18545455617@163.com
+ * @LastEditTime: 2026-04-21 09:22:12
+ * @FilePath: /store/src/App.vue
+ * @Description: 应用商店主界面
+-->
 <template>
   <div class="app-layout">
     <header class="app-header">

@@ -1,11 +1,12 @@
 /*
- * @Author: error: error: git config user.name & please set dead value or install git && error: git config user.email & please set dead value or install git & please set dead value or install git
+ * @Author: wangye 18545455617@163.com
  * @Date: 2026-04-20 14:45:03
- * @LastEditors: error: error: git config user.name & please set dead value or install git && error: git config user.email & please set dead value or install git & please set dead value or install git
- * @LastEditTime: 2026-04-21 09:17:18
+ * @LastEditors: wangye 18545455617@163.com
+ * @LastEditTime: 2026-04-21 09:20:52
  * @FilePath: /store/src/style.css
- * @Description: 应用样式
+ * @Description: 全局样式
  */
+
 :root {
   --text: #6b6375;
   --text-h: #08060d;
