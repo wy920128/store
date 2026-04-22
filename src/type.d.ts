@@ -2,7 +2,7 @@
  * @Author: wangye 18545455617@163.com
  * @Date: 2026-04-20 16:30:23
  * @LastEditors: wangye 18545455617@163.com
- * @LastEditTime: 2026-04-21 09:21:38
+ * @LastEditTime: 2026-04-21 15:09:45
  * @FilePath: /store/src/type.d.ts
  * @Description: 数据类型定义
  */
@@ -22,7 +22,8 @@ export interface Category {
 export interface Software {
   id: string
   name: string
-  package: string | null
+  description: string | null
+  package: string
   version: string | null
   size: string | null
   icon_url: string | null

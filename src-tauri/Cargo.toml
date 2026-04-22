@@ -1,11 +1,11 @@
 [package]
-name = "app"
-version = "0.1.0"
-description = "内网应用商店"
+name = "store"
+version = "0.0.1"
+description = "内网应用商店, 支持一键安装软件"
 authors = ["王野"]
 license = ""
 repository = ""
-default-run = "app"
+default-run = "store"
 edition = "2021"
 rust-version = "1.60"
 

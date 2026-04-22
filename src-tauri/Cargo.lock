@@ -48,18 +48,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
-name = "app"
-version = "0.1.0"
-dependencies = [
- "mysql",
- "once_cell",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
-]
-
-[[package]]
 name = "atk"
 version = "0.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2985,6 +2973,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dbe866e1e51e8260c9eed836a042a5e7f6726bb2b411dffeaa712e19c388f23b"
 dependencies = [
  "loom",
+]
+
+[[package]]
+name = "store"
+version = "0.0.1"
+dependencies = [
+ "mysql",
+ "once_cell",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
 ]
 
 [[package]]

@@ -7,7 +7,7 @@
   },
   "package": {
     "productName": "store",
-    "version": "0.1.0"
+    "version": "0.0.1"
   },
   "tauri": {
     "allowlist": {
@@ -17,10 +17,15 @@
     },
     "bundle": {
       "active": true,
-      "category": "DeveloperTool",
-      "copyright": "",
+      "category": "Utility",
+      "copyright": "wangye",
       "deb": {
-        "depends": []
+        "depends": [
+          "apt",
+          "libgtk-3-0",
+          "libwebkit2gtk-4.0-37",
+          "policykit-1"
+        ]
       },
       "externalBin": [],
       "icon": [
@@ -30,8 +35,9 @@
         "icons/icon.icns",
         "icons/icon.ico"
       ],
-      "identifier": "com.tauri.dev",
-      "longDescription": "",
+      "identifier": "com.jms.wy.store",
+      "longDescription": "基于内网的应用商店，支持软件安装",
+      "shortDescription": "应用商店",
       "macOS": {
         "entitlements": null,
         "exceptionDomain": "",
@@ -40,8 +46,9 @@
         "signingIdentity": null
       },
       "resources": [],
-      "shortDescription": "",
-      "targets": "all",
+      "targets": [
+        "deb"
+      ],
       "windows": {
         "certificateThumbprint": null,
         "digestAlgorithm": "sha256",
@@ -57,10 +64,10 @@
     "windows": [
       {
         "fullscreen": false,
-        "height": 600,
-        "resizable": true,
-        "title": "AppStore",
-        "width": 800
+        "height": 900,
+        "resizable": false,
+        "title": "应用商店",
+        "width": 1000
       }
     ]
   }

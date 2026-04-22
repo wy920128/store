@@ -2,36 +2,53 @@
  * @Author: wangye 18545455617@163.com
  * @Date: 2026-04-20 16:27:48
  * @LastEditors: wangye 18545455617@163.com
- * @LastEditTime: 2026-04-21 09:22:02
+ * @LastEditTime: 2026-04-21 15:10:14
  * @FilePath: /store/src/data.ts
  * @Description: 数据管理
  */
-import { ref, reactive } from 'vue';
+import { ref, reactive, type Ref } from 'vue';
 import { invoke } from '@tauri-apps/api/tauri';
 import type { Category, LogInfo, Software, SystemInfo } from './type'
-export const systemData = ref<SystemInfo>({
+export const systemData: Ref<SystemInfo> = ref<SystemInfo>({
     name: `应用商店`,
-    major: 1,
+    major: 0,
     minor: 0,
-    patch: 0,
+    patch: 1,
     author: `王野`,
     update_log: null,
     created_time: null,
     updated_time: null,
     deleted_time: null,
 });
-// 搜索
-export const searchData = reactive({
+export const searchData: {
+    keyword: string;
+    funcSearch: () => Promise<void>;
+} = reactive({
     keyword: ``,
     funcSearch: async () => {
         tabsData.funcTabChange(tabsData.activeId);
     },
 });
-// 分类 & 应用列表
-export const tabsData = reactive({
+export const tabsData: {
+    activeId: string;
+    categoryList: Category[];
+    softwareList: Software[];
+    funcTabChange: (tab: string | number) => Promise<void>;
+} = reactive({
     activeId: `0`,
-    categoryList: [] as Category[],
-    softwareList: [] as Software[],
+    categoryList: [
+        {
+            id: 0,
+            name: `首页`,
+            icon: `ri-apps-2-line`,
+            description: null,
+            sort: null,
+            created_time: null,
+            updated_time: null,
+            deleted_time: null,
+        }
+    ],
+    softwareList: [],
     async funcTabChange(tab: string | number) {
         const cid: number = Number(tab);
         console.log(tab, cid);
@@ -40,19 +57,21 @@ export const tabsData = reactive({
         await loadList(cid);
     },
 });
-// 分页
-export const pageData = reactive({
+export const pageData: {
+    pageIndex: number;
+    pageSize: number;
+    total: number;
+    funcPageChange: () => Promise<void>;
+} = reactive({
     pageIndex: 1,
-    pageSize: 12,
+    pageSize: 6,
     total: 0,
     async funcPageChange() {
         await loadList(Number(tabsData.activeId));
     },
 });
-// 安装日志
-export const installLog = ref<LogInfo[]>([]);
-// 加载应用列表
-export async function loadList(categoryId: number) {
+export const installLog: Ref<LogInfo[]> = ref<LogInfo[]>([]);
+async function loadList(categoryId: number) {
     const list: Software[] = await invoke(`get_software`, {
         categoryId: categoryId,
         keyword: searchData.keyword,
@@ -66,8 +85,7 @@ export async function loadList(categoryId: number) {
     tabsData.softwareList = list;
     pageData.total = total;
 }
-// 安装应用
-export async function handleInstall(id: string, pkg: string | undefined) {
+export async function handleInstall(id: string, pkg: string) {
     if (!pkg) {
         installLog.value.push({ type: "error", message: `❌ 无包名` });
         return;
@@ -75,7 +93,7 @@ export async function handleInstall(id: string, pkg: string | undefined) {
     installLog.value.push({ type: "info", message: `正在安装：${pkg}\n请在弹出密码框输入密码...\n\n` });
     try {
         const log: string = await invoke(`install_package`, {
-            software_id: id,
+            softwareId: id,
             package: pkg,
         });
         installLog.value.push({ type: "info", message: log });
@@ -83,15 +101,14 @@ export async function handleInstall(id: string, pkg: string | undefined) {
         installLog.value.push({ type: "error", message: `❌ 错误：${e}` });
     }
 }
-// 防抖搜索
 let timer: any;
 export function debounceSearch() {
     clearTimeout(timer);
     timer = setTimeout(() => searchData.funcSearch(), 500);
 }
-// 初始化
 export async function initApp() {
     systemData.value = await invoke(`get_system_info`);
-    tabsData.categoryList = await invoke(`get_categories`);
+    const apiCategories: Category[] = await invoke(`get_categories`);
+    tabsData.categoryList = [...tabsData.categoryList, ...apiCategories];
     tabsData.funcTabChange(`0`);
 }

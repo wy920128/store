@@ -4,15 +4,18 @@ use mysql::*;
 use once_cell::sync::Lazy;
 use serde::Serialize;
 use std::sync::Mutex;
+
 static POOL: Lazy<Mutex<Option<Pool>>> = Lazy::new(|| Mutex::new(None));
+
 fn init_db() {
     let mut lock = POOL.lock().unwrap();
     if lock.is_some() {
         return;
     }
     let opts = Opts::from_url(&format!(
-        "mysql://{}:{}@{}:{}/{}",
-        "wangye", "Wy025871.", "182.92.221.228", 6603, "store"
+        "mysql://{}:{}@{}:{}/{}?charset=utf8mb4&time_zone=+08:00",
+        // "wangye", "Wy025871.", "182.92.221.228", 6603, "store"
+        "wangye", "Wy025871.", "10.3.32.239", 3306, "store"
     ))
     .unwrap();
     match Pool::new(opts) {
@@ -79,27 +82,34 @@ where
 #[tauri::command]
 fn get_system_info() -> Result<SystemInfo, String> {
     let mut conn = get_conn()?;
-    let info = conn
-        .query_map(
-            "SELECT name,major,minor,patch,author,update_log,created_time,updated_time,deleted_time
-             FROM system_info WHERE deleted_time IS NULL ORDER BY id DESC LIMIT 1",
-            |row: Row| SystemInfo {
-                name: get_value(&row, 0).unwrap(),
-                major: get_value(&row, 1).unwrap(),
-                minor: get_value(&row, 2).unwrap(),
-                patch: get_value(&row, 3).unwrap(),
-                author: get_value(&row, 4),
-                update_log: get_value(&row, 5),
-                created_time: get_value(&row, 6),
-                updated_time: get_value(&row, 7),
-                deleted_time: get_value(&row, 8),
-            },
-        )
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .next();
+    let result = conn.query_map(
+        "SELECT name,major,minor,patch,author,update_log,
+         CAST(created_time AS CHAR) AS created_time,
+         CAST(updated_time AS CHAR) AS updated_time,
+         CAST(deleted_time AS CHAR) AS deleted_time
+        FROM system_info WHERE deleted_time IS NULL ORDER BY id DESC LIMIT 1",
+        |row: Row| SystemInfo {
+            name: get_value(&row, 0).unwrap(),
+            major: get_value(&row, 1).unwrap(),
+            minor: get_value(&row, 2).unwrap(),
+            patch: get_value(&row, 3).unwrap(),
+            author: get_value(&row, 4),
+            update_log: get_value(&row, 5),
+            created_time: get_value(&row, 6),
+            updated_time: get_value(&row, 7),
+            deleted_time: get_value(&row, 8),
+        },
+    );
+    if let Err(e) = &result {
+        println!("【查询系统信息失败】: {}", e);
+        return Err(format!("数据库查询失败：{}", e));
+    }
+    let info = result.unwrap().into_iter().next();
+    if info.is_none() {
+        println!("【警告】system_info 表中没有数据！");
+    }
     Ok(info.unwrap_or(SystemInfo {
-        name: "UOS内网应用商店".into(),
+        name: "应用商店".to_string(),
         major: 1,
         minor: 0,
         patch: 0,
@@ -115,7 +125,10 @@ fn get_categories() -> Result<Vec<Category>, String> {
     let mut conn = get_conn()?;
     let list: Vec<Category> = conn
         .query_map(
-            "SELECT id,name,icon,description,sort,created_time,updated_time,deleted_time
+            "SELECT id,name,icon,description,sort,
+             CAST(created_time AS CHAR) AS created_time,
+             CAST(updated_time AS CHAR) AS updated_time,
+             CAST(deleted_time AS CHAR) AS deleted_time
              FROM category WHERE deleted_time IS NULL ORDER BY sort ASC",
             |row: Row| Category {
                 id: get_value(&row, 0).unwrap(),
@@ -129,6 +142,10 @@ fn get_categories() -> Result<Vec<Category>, String> {
             },
         )
         .map_err(|e| e.to_string())?;
+    println!("✅ 分类查询完成，共 {} 条", list.len());
+    if let Some(first) = list.first() {
+        println!("🔍 分类第一条数据：\n{:#?}", first);
+    }
     Ok(list)
 }
 #[tauri::command]
@@ -142,8 +159,10 @@ fn get_software(
     let offset = (page - 1) * page_size;
     let mut sql = "
         SELECT s.id,s.name,s.package,s.version,s.size,s.icon_url,s.download_count,
-               s.provider_department,s.provider,s.top,s.status,
-               s.created_time,s.updated_time,s.deleted_time
+        s.provider_department,s.provider,s.top,s.status,
+        CAST(s.created_time AS CHAR) AS created_time,
+        CAST(s.updated_time AS CHAR) AS updated_time,
+        CAST(s.deleted_time AS CHAR) AS deleted_time
         FROM software s
         LEFT JOIN category2software c2s ON s.id = c2s.software_id
         WHERE s.deleted_time IS NULL AND s.status = 1 "
@@ -180,6 +199,10 @@ fn get_software(
             deleted_time: get_value(&row, 13),
         })
         .map_err(|e| e.to_string())?;
+    println!("✅ 软件查询完成，共 {} 条", list.len());
+    if let Some(first) = list.first() {
+        println!("🔍 软件第一条数据：\n{:#?}", first);
+    }
     Ok(list)
 }
 #[tauri::command]
@@ -206,31 +229,51 @@ fn get_software_count(category_id: u32, keyword: String) -> Result<u32, String> 
         .exec_first(&sql, params)
         .map_err(|e| e.to_string())?
         .unwrap_or(0);
+    println!("✅ 软件总数查询完成：{}", count);
     Ok(count)
 }
-// ===================== 安装（图形密码弹窗）=====================
 #[tauri::command]
 async fn install_package(software_id: String, package: String) -> Result<String, String> {
-    // 1. 执行安装（图形密码弹窗）
     let result = std::process::Command::new("pkexec")
         .arg("apt")
         .arg("install")
         .arg("-y")
         .arg(&package)
         .output()
-        .map_err(|e| format!("启动授权失败：{e}"))?;
-    // 2. 统计下载量 +1
-    let mut conn = get_conn()?;
-    let _ = conn.exec_drop(
-        "UPDATE software SET download_count = download_count +1 WHERE id=?",
-        params![software_id],
-    );
-    // 3. 返回日志
-    let out = String::from_utf8_lossy(&result.stdout);
-    let err = String::from_utf8_lossy(&result.stderr);
-    Ok(format!("=== 输出 ===\n{out}\n=== 错误 ===\n{err}"))
+        .map_err(|e| format!("启动授权失败：{}", e))?;
+    let success = result.status.success();
+    if success {
+        if let Ok(mut conn) = get_conn() {
+            let _ = conn.exec_drop(
+                "UPDATE software SET download_count = download_count +1 WHERE id=?",
+                params![software_id],
+            );
+        }
+    }
+    let stdout_raw = String::from_utf8_lossy(&result.stdout);
+    let stderr_raw = String::from_utf8_lossy(&result.stderr);
+    println!("=== 【后台原始 stdout】===\n{}", stdout_raw);
+    println!("=== 【后台原始 stderr】===\n{}", stderr_raw);
+    let clean_text = |s: &str| -> String {
+        s.lines()
+            .map(|line| line.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let stdout_clean = clean_text(&stdout_raw);
+    let stderr_clean = clean_text(&stderr_raw);
+    let status = if success { "✅ 安装成功" } else { "❌ 安装失败" };
+    let mut log = format!("[{}] 包：{}", status, package);
+    if !stdout_clean.is_empty() {
+        log.push_str(&format!("\n{}", stdout_clean));
+    }
+    if !stderr_clean.is_empty() {
+        log.push_str(&format!("\n{}", stderr_clean));
+    }
+    println!("=== 【返回前端的干净日志】===\n{}", log);
+    Ok(log)
 }
-// ======================================================
 fn main() {
     init_db();
     tauri::Builder::default()
