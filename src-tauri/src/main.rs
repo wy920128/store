@@ -1,67 +1,52 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use mysql::prelude::*;
-use mysql::*;
+use tauri::Manager;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command as AsyncCommand;
+use std::process::Stdio;
 use once_cell::sync::Lazy;
 use serde::Serialize;
+use sqlx::mysql::MySqlPool;
+use sqlx::FromRow;
 use std::sync::Mutex;
-
-static POOL: Lazy<Mutex<Option<Pool>>> = Lazy::new(|| Mutex::new(None));
-
-fn init_db() {
-    let mut lock = POOL.lock().unwrap();
-    if lock.is_some() {
-        return;
-    }
-    let opts = Opts::from_url(&format!(
-        "mysql://{}:{}@{}:{}/{}?charset=utf8mb4&time_zone=+08:00",
-        // "wangye", "Wy025871.", "182.92.221.228", 6603, "store"
-        "wangye", "Wy025871.", "10.3.32.239", 3306, "store"
-    ))
-    .unwrap();
-    match Pool::new(opts) {
-        Ok(p) => {
-            println!("✅ 数据库连接成功");
-            *lock = Some(p);
-        }
-        Err(e) => {
-            eprintln!("❌ 数据库连接失败: {}", e);
-        }
-    }
+static POOL: Lazy<Mutex<Option<MySqlPool>>> = Lazy::new(|| Mutex::new(None));
+async fn init_pool() -> MySqlPool {
+    let url = format!(
+        "mysql://{}:{}@{}:{}/{}",
+        "wangye", "Wy025871.", "182.92.221.228", 6603, "store"
+        // "wangye", "Wy025871.", "10.3.32.239", 3306, "store"
+    );
+    MySqlPool::connect(&url).await.expect("❌ 数据库连接失败")
 }
-fn get_conn() -> Result<PooledConn, String> {
-    let lock = POOL.lock().unwrap();
-    let pool = lock.as_ref().ok_or("数据库未连接")?;
-    pool.get_conn().map_err(|e| e.to_string())
-}
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, FromRow)]
 pub struct Category {
-    pub id: u32,
+    pub id: i32,
     pub name: String,
     pub icon: Option<String>,
     pub description: Option<String>,
-    pub sort: Option<u32>,
+    pub sort: Option<i32>,
     pub created_time: Option<String>,
     pub updated_time: Option<String>,
     pub deleted_time: Option<String>,
 }
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, FromRow)]
 pub struct Software {
     pub id: String,
     pub name: String,
     pub package: Option<String>,
     pub version: Option<String>,
-    pub size: Option<String>,
+    pub description: Option<String>,
+    pub size: i32,
     pub icon_url: Option<String>,
-    pub download_count: Option<u32>,
+    pub download_count: i32,
     pub provider_department: Option<String>,
     pub provider: Option<String>,
-    pub top: Option<u32>,
-    pub status: Option<u32>,
+    pub top: Option<i32>,
+    pub status: i32,
     pub created_time: Option<String>,
     pub updated_time: Option<String>,
     pub deleted_time: Option<String>,
 }
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, FromRow)]
 pub struct SystemInfo {
     pub name: String,
     pub major: i32,
@@ -73,210 +58,290 @@ pub struct SystemInfo {
     pub updated_time: Option<String>,
     pub deleted_time: Option<String>,
 }
-fn get_value<T>(row: &Row, i: usize) -> Option<T>
-where
-    T: FromValue,
-{
-    row.get_opt(i).transpose().ok().flatten()
+#[tauri::command]
+async fn get_system_info() -> Result<SystemInfo, String> {
+    let pool = POOL.lock().unwrap().clone().ok_or("数据库未连接")?;
+    let result = sqlx::query_as::<_, SystemInfo>(
+        "SELECT name, major, minor, patch, author, update_log,
+       DATE_FORMAT(created_time, '%Y-%m-%d %H:%i:%s') AS created_time,
+       DATE_FORMAT(updated_time, '%Y-%m-%d %H:%i:%s') AS updated_time,
+       DATE_FORMAT(deleted_time, '%Y-%m-%d %H:%i:%s') AS deleted_time   
+         FROM system_info WHERE deleted_time IS NULL ORDER BY id DESC LIMIT 1"
+    )
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    match result {
+        Some(info) => Ok(info),
+        None => Ok(SystemInfo {
+            name: "应用商店".into(),
+            major: 1,
+            minor: 0,
+            patch: 0,
+            author: Some("wangye".into()),
+            update_log: None,
+            created_time: None,
+            updated_time: None,
+            deleted_time: None,
+        }),
+    }
 }
 #[tauri::command]
-fn get_system_info() -> Result<SystemInfo, String> {
-    let mut conn = get_conn()?;
-    let result = conn.query_map(
-        "SELECT name,major,minor,patch,author,update_log,
-         CAST(created_time AS CHAR) AS created_time,
-         CAST(updated_time AS CHAR) AS updated_time,
-         CAST(deleted_time AS CHAR) AS deleted_time
-        FROM system_info WHERE deleted_time IS NULL ORDER BY id DESC LIMIT 1",
-        |row: Row| SystemInfo {
-            name: get_value(&row, 0).unwrap(),
-            major: get_value(&row, 1).unwrap(),
-            minor: get_value(&row, 2).unwrap(),
-            patch: get_value(&row, 3).unwrap(),
-            author: get_value(&row, 4),
-            update_log: get_value(&row, 5),
-            created_time: get_value(&row, 6),
-            updated_time: get_value(&row, 7),
-            deleted_time: get_value(&row, 8),
-        },
-    );
-    if let Err(e) = &result {
-        println!("【查询系统信息失败】: {}", e);
-        return Err(format!("数据库查询失败：{}", e));
-    }
-    let info = result.unwrap().into_iter().next();
-    if info.is_none() {
-        println!("【警告】system_info 表中没有数据！");
-    }
-    Ok(info.unwrap_or(SystemInfo {
-        name: "应用商店".to_string(),
-        major: 1,
-        minor: 0,
-        patch: 0,
-        author: Some("wangye".into()),
-        update_log: None,
-        created_time: None,
-        updated_time: None,
-        deleted_time: None,
-    }))
+async fn get_categories() -> Result<Vec<Category>, String> {
+    let pool = POOL.lock().unwrap().clone().ok_or("数据库未连接")?;
+    sqlx::query_as::<_, Category>(
+        "SELECT CAST(id AS SIGNED) AS id,
+        name, icon, description,
+        CAST(sort AS SIGNED) AS sort,
+        DATE_FORMAT(created_time, '%Y-%m-%d %H:%i:%s') AS created_time,
+        DATE_FORMAT(updated_time, '%Y-%m-%d %H:%i:%s') AS updated_time,
+        DATE_FORMAT(deleted_time, '%Y-%m-%d %H:%i:%s') AS deleted_time   
+         FROM category WHERE deleted_time IS NULL ORDER BY sort ASC"
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| e.to_string())
 }
 #[tauri::command]
-fn get_categories() -> Result<Vec<Category>, String> {
-    let mut conn = get_conn()?;
-    let list: Vec<Category> = conn
-        .query_map(
-            "SELECT id,name,icon,description,sort,
-             CAST(created_time AS CHAR) AS created_time,
-             CAST(updated_time AS CHAR) AS updated_time,
-             CAST(deleted_time AS CHAR) AS deleted_time
-             FROM category WHERE deleted_time IS NULL ORDER BY sort ASC",
-            |row: Row| Category {
-                id: get_value(&row, 0).unwrap(),
-                name: get_value(&row, 1).unwrap(),
-                icon: get_value(&row, 2),
-                description: get_value(&row, 3),
-                sort: get_value(&row, 4),
-                created_time: get_value(&row, 5),
-                updated_time: get_value(&row, 6),
-                deleted_time: get_value(&row, 7),
-            },
-        )
-        .map_err(|e| e.to_string())?;
-    println!("✅ 分类查询完成，共 {} 条", list.len());
-    if let Some(first) = list.first() {
-        println!("🔍 分类第一条数据：\n{:#?}", first);
-    }
-    Ok(list)
-}
-#[tauri::command]
-fn get_software(
-    category_id: u32,
+async fn get_software(
+    category_id: i32,
     keyword: String,
-    page: u32,
-    page_size: u32,
+    page: i32,
+    page_size: i32,
 ) -> Result<Vec<Software>, String> {
-    let mut conn = get_conn()?;
+    let pool = POOL.lock().unwrap().clone().ok_or("数据库未连接")?;
     let offset = (page - 1) * page_size;
-    let mut sql = "
-        SELECT s.id,s.name,s.package,s.version,s.size,s.icon_url,s.download_count,
-        s.provider_department,s.provider,s.top,s.status,
-        CAST(s.created_time AS CHAR) AS created_time,
-        CAST(s.updated_time AS CHAR) AS updated_time,
-        CAST(s.deleted_time AS CHAR) AS deleted_time
-        FROM software s
-        LEFT JOIN category2software c2s ON s.id = c2s.software_id
+    let mut qb = sqlx::QueryBuilder::new(
+        "SELECT s.id,
+        s.name, s.package, s.version, s.description, s.size, s.icon_url,
+        CAST(s.download_count AS SIGNED) AS download_count,
+        CAST(s.top AS SIGNED) AS top,
+        CAST(s.status AS SIGNED) AS status,
+        s.provider_department, s.provider, DATE_FORMAT(s.created_time, '%Y-%m-%d %H:%i:%s') AS created_time,
+        DATE_FORMAT(s.updated_time, '%Y-%m-%d %H:%i:%s') AS updated_time,
+        DATE_FORMAT(s.deleted_time, '%Y-%m-%d %H:%i:%s') AS deleted_time
+        FROM software s LEFT JOIN category2software c2s ON s.id = c2s.software_id
         WHERE s.deleted_time IS NULL AND s.status = 1 "
-    .to_string();
-    let mut params: Vec<Value> = Vec::new();
+    );
     if category_id > 0 {
-        sql += " AND c2s.category_id = ? ";
-        params.push(category_id.into());
+        qb.push(" AND c2s.category_id = ");
+        qb.push_bind(category_id);
     } else {
-        sql += " AND s.top = 1 ";
+        qb.push(" AND s.top = 1 ");
     }
     if !keyword.is_empty() {
-        sql += " AND s.name LIKE ? ";
-        params.push(format!("%{keyword}%").into());
+        qb.push(" AND s.name LIKE ");
+        qb.push_bind(format!("%{keyword}%"));
     }
-    sql += " GROUP BY s.id ORDER BY s.top DESC, s.download_count DESC LIMIT ?, ?";
-    params.push(offset.into());
-    params.push(page_size.into());
-    let list: Vec<Software> = conn
-        .exec_map(&sql, params, |row: Row| Software {
-            id: get_value(&row, 0).unwrap(),
-            name: get_value(&row, 1).unwrap(),
-            package: get_value(&row, 2),
-            version: get_value(&row, 3),
-            size: get_value(&row, 4),
-            icon_url: get_value(&row, 5),
-            download_count: get_value(&row, 6),
-            provider_department: get_value(&row, 7),
-            provider: get_value(&row, 8),
-            top: get_value(&row, 9),
-            status: get_value(&row, 10),
-            created_time: get_value(&row, 11),
-            updated_time: get_value(&row, 12),
-            deleted_time: get_value(&row, 13),
-        })
+    qb.push(" GROUP BY s.id ORDER BY s.top DESC, s.download_count DESC LIMIT ");
+    qb.push_bind(page_size);
+    qb.push(" OFFSET ");
+    qb.push_bind(offset);
+    qb.build_query_as::<Software>()
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn get_software_count(category_id: i32, keyword: String) -> Result<i32, String> {
+    let pool = POOL.lock().unwrap().clone().ok_or("数据库未连接")?;
+    let mut qb = sqlx::QueryBuilder::new(
+        "SELECT COUNT(DISTINCT s.id) FROM software s LEFT JOIN category2software c2s ON s.id = c2s.software_id
+         WHERE s.deleted_time IS NULL AND s.status = 1 "
+    );
+    if category_id > 0 {
+        qb.push(" AND c2s.category_id = ");
+        qb.push_bind(category_id);
+    } else {
+        qb.push(" AND s.top = 1 ");
+    }
+    if !keyword.is_empty() {
+        qb.push(" AND s.name LIKE ");
+        qb.push_bind(format!("%{keyword}%"));
+    }
+    let count: i64 = qb
+        .build_query_scalar()
+        .fetch_one(&pool)
+        .await
         .map_err(|e| e.to_string())?;
-    println!("✅ 软件查询完成，共 {} 条", list.len());
-    if let Some(first) = list.first() {
-        println!("🔍 软件第一条数据：\n{:#?}", first);
-    }
-    Ok(list)
+    Ok(count as i32)
 }
+// #[tauri::command]
+// async fn install_package(software_id: String, package: String) -> Result<String, String> {
+//     let result = std::process::Command::new("pkexec")
+//         .arg("apt")
+//         .arg("install")
+//         .arg("-y")
+//         .arg(&package)
+//         .output()
+//         .map_err(|e| format!("启动授权失败：{}", e))?;
+//     let success = result.status.success();
+//     if success {
+//         let pool_opt = {
+//             POOL.lock()
+//             .map(|guard| guard.clone())
+//             .unwrap_or(None)
+//         };
+//         if let Some(pool) = pool_opt {
+//             let _ = sqlx::query("UPDATE software SET download_count = download_count + 1 WHERE id = ?")
+//             .bind(&software_id)
+//             .execute(&pool)
+//             .await;
+//         }
+//         Ok(format!("✅ 安装成功 {}", package))
+//     } else {
+//         let clean = |s: &[u8]| {
+//             String::from_utf8_lossy(s)
+//             .lines()
+//             .filter(|l| !l.is_empty())
+//             .collect::<Vec<_>>()
+//             .join("\n")
+//         };
+//         let out = clean(&result.stdout);
+//         let err = clean(&result.stderr);
+//         Ok(format!("❌ 安装失败 {}\n{}\n{}", package, out, err))
+//     }
+// }
 #[tauri::command]
-fn get_software_count(category_id: u32, keyword: String) -> Result<u32, String> {
-    let mut conn = get_conn()?;
-    let mut sql = "
-        SELECT COUNT(DISTINCT s.id)
-        FROM software s
-        LEFT JOIN category2software c2s ON s.id = c2s.software_id
-        WHERE s.deleted_time IS NULL AND s.status = 1 "
-    .to_string();
-    let mut params: Vec<Value> = Vec::new();
-    if category_id > 0 {
-        sql += " AND c2s.category_id = ? ";
-        params.push(category_id.into());
-    } else {
-        sql += " AND s.top = 1 ";
-    }
-    if !keyword.is_empty() {
-        sql += " AND s.name LIKE ? ";
-        params.push(format!("%{keyword}%").into());
-    }
-    let count: u32 = conn
-        .exec_first(&sql, params)
-        .map_err(|e| e.to_string())?
-        .unwrap_or(0);
-    println!("✅ 软件总数查询完成：{}", count);
-    Ok(count)
-}
-#[tauri::command]
-async fn install_package(software_id: String, package: String) -> Result<String, String> {
-    let result = std::process::Command::new("pkexec")
+async fn install_package(
+    app: tauri::AppHandle,
+    software_id: String,
+    package: String,
+) -> Result<String, String> {
+    let mut child = AsyncCommand::new("pkexec")
         .arg("apt")
         .arg("install")
         .arg("-y")
         .arg(&package)
-        .output()
-        .map_err(|e| format!("启动授权失败：{}", e))?;
-    let success = result.status.success();
-    if success {
-        if let Ok(mut conn) = get_conn() {
-            let _ = conn.exec_drop(
-                "UPDATE software SET download_count = download_count +1 WHERE id=?",
-                params![software_id],
-            );
+        .stderr(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("启动安装进程失败: {}", e))?;
+    // 初始进度 0%
+    let _ = app.emit_all("install-progress", &serde_json::json!({
+        "software_id": &software_id,
+        "percent": 0,
+        "status": "等待授权..."
+    }));
+    let stderr = child.stderr.take().ok_or("无法获取 stderr")?;
+    let stdout = child.stdout.take().ok_or("无法获取 stdout")?;
+    let stderr_reader = BufReader::new(stderr);
+    let stdout_reader = BufReader::new(stdout);
+    let mut stderr_lines = stderr_reader.lines();
+    let mut stdout_lines = stdout_reader.lines();
+    let mut last_percent: u32 = 0;
+    let software_id_clone = software_id.clone();
+    let app_handle = app.clone();
+    let progress_task = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                line = stderr_lines.next_line() => {
+                    match line {
+                        Ok(Some(line)) => {
+                            if let Some(percent) = parse_apt_progress(&line) {
+                                if percent != last_percent {
+                                    last_percent = percent;
+                                    let payload = serde_json::json!({
+                                        "software_id": software_id_clone,
+                                        "percent": percent,
+                                        "status": format!("正在安装... {percent}%")
+                                    });
+                                    let _ = app_handle.emit_all("install-progress", &payload);
+                                }
+                            }
+                        },
+                        Err(e) => eprintln!("stderr read error: {}", e),
+                        _ => break,
+                    }
+                },
+                line = stdout_lines.next_line() => {
+                    if let Err(e) = line {
+                        eprintln!("stdout read error: {}", e);
+                    }
+                },
+            }
+        }
+    });
+    let status = child.wait().await.map_err(|e| format!("等待进程失败: {}", e))?;
+    progress_task.await.ok();
+    if status.success() {
+        let final_payload = serde_json::json!({
+            "software_id": &software_id,
+            "percent": 100,
+            "status": "安装完成"
+        });
+        let _ = app.emit_all("install-progress", &final_payload);
+        let pool_opt = POOL.lock().map(|guard| guard.clone()).unwrap_or(None);
+        if let Some(pool) = pool_opt {
+            let _ = sqlx::query(
+                "UPDATE software SET download_count = download_count + 1 WHERE id = ?"
+            )
+            .bind(&software_id)
+            .execute(&pool)
+            .await;
+        }
+        Ok(format!("✅ 安装成功 {}", package))
+    } else {
+        let fail_payload = serde_json::json!({
+            "software_id": &software_id,
+            "percent": -1,
+            "status": "安装失败"
+        });
+        let _ = app.emit_all("install-progress", &fail_payload);
+        Err(format!("❌ 安装失败 {}", package))
+    }
+}
+fn parse_apt_progress(line: &str) -> Option<u32> {
+    if let Some(start) = line.find("Progress: [") {
+        let rest = &line[start + "Progress: [".len()..];
+        if let Some(end) = rest.find('%') {
+            let num_str = rest[..end].trim();
+            return num_str.parse::<u32>().ok();
         }
     }
-    let stdout_raw = String::from_utf8_lossy(&result.stdout);
-    let stderr_raw = String::from_utf8_lossy(&result.stderr);
-    println!("=== 【后台原始 stdout】===\n{}", stdout_raw);
-    println!("=== 【后台原始 stderr】===\n{}", stderr_raw);
-    let clean_text = |s: &str| -> String {
-        s.lines()
-            .map(|line| line.trim().to_string())
-            .filter(|l| !l.is_empty())
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    let stdout_clean = clean_text(&stdout_raw);
-    let stderr_clean = clean_text(&stderr_raw);
-    let status = if success { "✅ 安装成功" } else { "❌ 安装失败" };
-    let mut log = format!("[{}] 包：{}", status, package);
-    if !stdout_clean.is_empty() {
-        log.push_str(&format!("\n{}", stdout_clean));
-    }
-    if !stderr_clean.is_empty() {
-        log.push_str(&format!("\n{}", stderr_clean));
-    }
-    println!("=== 【返回前端的干净日志】===\n{}", log);
-    Ok(log)
+    None
 }
 fn main() {
-    init_db();
     tauri::Builder::default()
+        .setup(|_app| {
+            let pool = tauri::async_runtime::block_on(init_pool());
+            println!("✅ 数据库连接成功");
+            tauri::async_runtime::block_on(async {
+                println!("================ 数据库信息 ================");
+                match sqlx::query_scalar::<_, String>("SELECT DATABASE()")
+                    .fetch_optional(&pool)
+                    .await
+                {
+                    Ok(Some(db)) => println!("当前数据库: {}", db),
+                    Ok(None) => println!("当前数据库: NULL"),
+                    Err(e) => println!("❌ 获取数据库名失败: {}", e),
+                }
+                let tables: Vec<String> = match sqlx::query_scalar("SHOW TABLES")
+                    .fetch_all(&pool)
+                    .await
+                {
+                    Ok(t) => t,
+                    Err(e) => {
+                        println!("❌ 获取表列表失败: {}", e);
+                        return;
+                    }
+                };
+                println!("数据表数量: {}", tables.len());
+                for table in tables {
+                    let sql = format!("SELECT COUNT(*) FROM `{}`", table);
+                    match sqlx::query_scalar::<_, i64>(&sql)
+                        .fetch_one(&pool)
+                        .await
+                    {
+                        Ok(count) => println!("表: {:<20} | 数据量: {}", table, count),
+                        Err(e) => println!("表: {:<20} | 查询失败: {}", table, e),
+                    }
+                }
+                println!("===========================================");
+            });
+            *POOL.lock().unwrap() = Some(pool);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_system_info,
             get_categories,

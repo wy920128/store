@@ -2,7 +2,7 @@
  * @Author: wangye 18545455617@163.com
  * @Date: 2026-04-20 14:45:03
  * @LastEditors: wangye 18545455617@163.com
- * @LastEditTime: 2026-04-21 15:42:46
+ * @LastEditTime: 2026-05-14 08:27:01
  * @FilePath: /store/src/App.vue
  * @Description: 应用商店主界面
 -->
@@ -23,7 +23,7 @@
           placeholder="搜索应用"
           class="header-search"
           @keyup.enter="searchData.funcSearch"
-          @input="debounceSearch"
+          @input="searchData.funcSearch"
           clearable
         >
           <template #prefix>
@@ -98,12 +98,31 @@
                 <el-button
                   type="success"
                   size="small"
-                  @click="handleInstall(software.id, software.package)"
+                  :loading="globalData.installingId === software.id"
+                  :disabled="globalData.installingId === software.id"
+                  @click="
+                    globalData.handleInstall(
+                      software.id,
+                      software.package,
+                      software.name,
+                    )
+                  "
                 >
                   一键安装
                 </el-button>
               </div>
             </div>
+          </div>
+          <div
+            v-if="globalData.installProgress[software.id]"
+            class="card-mini-progress"
+          >
+            <div
+              class="mini-fill"
+              :style="{
+                width: globalData.installProgress[software.id].percent + '%',
+              }"
+            ></div>
           </div>
         </el-card>
         <div v-if="tabsData.softwareList.length === 0" class="app-empty">
@@ -129,16 +148,18 @@
               round
               plain
               size="small"
-              @click="installLog = []"
+              @click="logData.logs = []"
               >清空</el-button
             >
           </div>
           <div class="log-body">
-            <pre v-for="(log, idx) in installLog" :key="idx" :class="log.type">
-            {{ log.message }}
-          </pre
+            <pre
+              v-for="(log, idx) in logData.logs"
+              :key="idx"
+              :class="log.type"
+              >{{ log.message }}</pre
             >
-            <div v-if="installLog.length === 0" class="log-empty">
+            <div v-if="logData.logs.length === 0" class="log-empty">
               暂无运行日志
             </div>
           </div>
@@ -154,23 +175,66 @@
   </div>
 </template>
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { onBeforeUnmount, onMounted } from "vue";
 import {
   systemData,
   searchData,
   tabsData,
   pageData,
-  installLog,
-  handleInstall,
-  debounceSearch,
+  logData,
+  globalData,
   initApp,
 } from "./data";
-onMounted(() => {
-  initApp();
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { ElMessage, ElMessageBox } from "element-plus";
+let unlisten: UnlistenFn | null = null;
+onMounted(async () => {
+  await initApp();
+  if (unlisten) {
+    unlisten();
+  }
+  unlisten = await listen("install-progress", (event: any) => {
+    console.log("🔥 收到进度事件:", event.payload);
+    const { software_id, percent, status } = event.payload;
+    globalData.installProgress[software_id] = { percent, status };
+    if (percent === 100 || percent === -1) {
+      if (percent === 100) {
+        ElMessageBox.alert(`安装成功`, `安装完成`, {
+          confirmButtonText: `结束`,
+          callback: () => {
+            ElMessage({
+              type: `info`,
+              message: `安装完成`,
+            });
+          },
+        });
+      } else {
+        ElMessageBox.alert(`安装失败`, `安装完成`, {
+          confirmButtonText: `结束`,
+          callback: () => {
+            ElMessage({
+              type: `error`,
+              message: `安装失败`,
+            });
+          },
+        });
+      }
+      // 释放当前安装标记
+      if (globalData.installingId === software_id) {
+        globalData.installingId = null;
+      }
+      // 3 秒后移除进度条
+      setTimeout(() => {
+        delete globalData.installProgress[software_id];
+      }, 3000);
+    }
+  });
+  onBeforeUnmount(() => {
+    if (unlisten) {
+      unlisten();
+      unlisten = null;
+    }
+  });
 });
-console.log(`systemData`, systemData);
-console.log(`searchData`, searchData);
-console.log(`tabsData`, tabsData);
-console.log(`pageData`, pageData);
 </script>
 <style src="./style.scss" lang="scss"></style>

@@ -2,7 +2,7 @@
  * @Author: wangye 18545455617@163.com
  * @Date: 2026-04-20 16:30:23
  * @LastEditors: wangye 18545455617@163.com
- * @LastEditTime: 2026-04-21 15:09:45
+ * @LastEditTime: 2026-04-27 08:40:57
  * @FilePath: /store/src/type.d.ts
  * @Description: 数据类型定义
  */
@@ -17,7 +17,6 @@ export interface Category {
   updated_time: string | null
   deleted_time: string | null
 }
-
 // 应用信息
 export interface Software {
   id: string
@@ -36,7 +35,6 @@ export interface Software {
   updated_time: string | null
   deleted_time: string | null
 }
-
 // 系统信息
 export interface SystemInfo {
   name: string
@@ -49,7 +47,6 @@ export interface SystemInfo {
   updated_time: string | null
   deleted_time: string | null
 }
-
 // 日志信息
 export interface LogInfo {
   type: `info` | `error`;
