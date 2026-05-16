@@ -6,7 +6,7 @@
     "distDir": "../dist"
   },
   "package": {
-    "productName": "应用商店",
+    "productName": "store",
     "version": "0.0.1"
   },
   "tauri": {

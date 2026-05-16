@@ -2,7 +2,7 @@
  * @Author: wangye 18545455617@163.com
  * @Date: 2026-04-20 14:45:03
  * @LastEditors: wangye 18545455617@163.com
- * @LastEditTime: 2026-05-14 08:27:01
+ * @LastEditTime: 2026-05-14 16:04:08
  * @FilePath: /store/src/App.vue
  * @Description: 应用商店主界面
 -->
@@ -61,7 +61,7 @@
               <div class="card-left">
                 <el-image
                   class="card-icon"
-                  :src="software.icon_url || ''"
+                  :src="`http://10.3.35.200:23251/store/pool/icon/${software.icon_url || ''}.png`"
                   alt="图标"
                   fit="contain"
                 >

@@ -179,7 +179,7 @@
             width: 100%;
             display: flex;
             justify-content: center;
-            :deep(.el-button) {
+            .el-button {
               width: 80%;
               justify-content: center;
             }

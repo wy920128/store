@@ -12,8 +12,8 @@ static POOL: Lazy<Mutex<Option<MySqlPool>>> = Lazy::new(|| Mutex::new(None));
 async fn init_pool() -> MySqlPool {
     let url = format!(
         "mysql://{}:{}@{}:{}/{}",
-        "wangye", "Wy025871.", "182.92.221.228", 6603, "store"
-        // "wangye", "Wy025871.", "10.3.32.239", 3306, "store"
+        // "wangye", "Wy025871.", "182.92.221.228", 6603, "store"
+        "wangye", "Wy025871.", "10.3.32.239", 3306, "store"
     );
     MySqlPool::connect(&url).await.expect("❌ 数据库连接失败")
 }
@@ -121,7 +121,7 @@ async fn get_software(
         DATE_FORMAT(s.updated_time, '%Y-%m-%d %H:%i:%s') AS updated_time,
         DATE_FORMAT(s.deleted_time, '%Y-%m-%d %H:%i:%s') AS deleted_time
         FROM software s LEFT JOIN category2software c2s ON s.id = c2s.software_id
-        WHERE s.deleted_time IS NULL AND s.status = 1 "
+        WHERE s.deleted_time IS NULL AND s.status = 1"
     );
     if category_id > 0 {
         qb.push(" AND c2s.category_id = ");
@@ -133,7 +133,7 @@ async fn get_software(
         qb.push(" AND s.name LIKE ");
         qb.push_bind(format!("%{keyword}%"));
     }
-    qb.push(" GROUP BY s.id ORDER BY s.top DESC, s.download_count DESC LIMIT ");
+    qb.push(" GROUP BY s.id ORDER BY s.top DESC, s.created_time ASC LIMIT ");
     qb.push_bind(page_size);
     qb.push(" OFFSET ");
     qb.push_bind(offset);
@@ -209,20 +209,23 @@ async fn install_package(
     package: String,
 ) -> Result<String, String> {
     let mut child = AsyncCommand::new("pkexec")
-        .arg("apt")
-        .arg("install")
-        .arg("-y")
-        .arg(&package)
+        .arg("sh")
+        .arg("-c")
+        .arg("apt-get clean && apt-get update -qq && apt-get install -y \"$0\"")
+        .arg(&package) // 作为 $0 安全传入，避免命令注入
         .stderr(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
         .map_err(|e| format!("启动安装进程失败: {}", e))?;
     // 初始进度 0%
-    let _ = app.emit_all("install-progress", &serde_json::json!({
-        "software_id": &software_id,
-        "percent": 0,
-        "status": "等待授权..."
-    }));
+    let _ = app.emit_all(
+        "install-progress",
+        &serde_json::json!({
+            "software_id": &software_id,
+            "percent": 0,
+            "status": "正在准备安装环境（清理缓存、更新源）..."
+        }),
+    );
     let stderr = child.stderr.take().ok_or("无法获取 stderr")?;
     let stdout = child.stdout.take().ok_or("无法获取 stdout")?;
     let stderr_reader = BufReader::new(stderr);
@@ -230,6 +233,7 @@ async fn install_package(
     let mut stderr_lines = stderr_reader.lines();
     let mut stdout_lines = stdout_reader.lines();
     let mut last_percent: u32 = 0;
+    let mut install_phase_started = false;
     let software_id_clone = software_id.clone();
     let app_handle = app.clone();
     let progress_task = tokio::spawn(async move {
@@ -241,22 +245,33 @@ async fn install_package(
                             if let Some(percent) = parse_apt_progress(&line) {
                                 if percent != last_percent {
                                     last_percent = percent;
+                                    let status = if !install_phase_started {
+                                        install_phase_started = true;
+                                        format!("正在安装... {}%", percent)
+                                    } else {
+                                        format!("正在安装... {}%", percent)
+                                    };
                                     let payload = serde_json::json!({
                                         "software_id": software_id_clone,
                                         "percent": percent,
-                                        "status": format!("正在安装... {percent}%")
+                                        "status": status
                                     });
                                     let _ = app_handle.emit_all("install-progress", &payload);
                                 }
                             }
                         },
-                        Err(e) => eprintln!("stderr read error: {}", e),
-                        _ => break,
+                        Ok(None) => break,
+                        Err(e) => {
+                            eprintln!("stderr read error: {}", e);
+                            break;
+                        }
                     }
                 },
                 line = stdout_lines.next_line() => {
-                    if let Err(e) = line {
-                        eprintln!("stdout read error: {}", e);
+                    match line {
+                        Ok(Some(_)) => {},
+                        Ok(None) => break,
+                        Err(e) => eprintln!("stdout read error: {}", e),
                     }
                 },
             }
